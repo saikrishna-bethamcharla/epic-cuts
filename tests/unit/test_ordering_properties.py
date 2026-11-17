@@ -8,6 +8,7 @@ from pathlib import Path
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from autocut.ordering.parser import NumberKey
 from autocut.ordering.plan import build_ordering
 from tests.conftest import no_probe
 
@@ -28,9 +29,7 @@ def clip_names(draw: st.DrawFn) -> list[str]:
     return names
 
 
-def build_result(
-    names: list[str],
-) -> tuple[list[str], list[tuple[int, int, float, str]]]:
+def build_result(names: list[str]) -> tuple[list[str], list[NumberKey]]:
     with tempfile.TemporaryDirectory() as raw:
         directory = Path(raw)
         for name in names:

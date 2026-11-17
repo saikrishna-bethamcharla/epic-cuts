@@ -1,20 +1,23 @@
-"""Extract the clip number from a filename.
+"""Extract clip numbers from a filename and define their sort order.
 
-Ordering contract (brief 3.1), lower sorts first::
-
-    1  <  1a  <  1b  <  1.5  <  1-2  <  2
+The default rule is ``natural``: *every* number token in the name is compared,
+left to right, so ``S01E01`` sorts before ``S01E02`` and ``Scene2_Shot1`` before
+``Scene2_Shot3``. ``first``, ``last`` and ``regex`` are explicit overrides that
+narrow the key to one chosen number.
 
 A filename is reduced to its name without a *known media extension* (so ``1.5``
 stays ``1.5`` instead of collapsing to ``1``), then scanned for number tokens::
 
     major          digits                       "1", "01", "10"
     [".frac"]      decimal continuation         "1.5"
-    [alpha]        1-2 letters, lower-cased     "1a", "1b"    ["-"sub]       dash continuation            "1-2"
+    [alpha]        1-2 letters, lower-cased     "1a", "1b"
+    ["-"sub]       dash continuation            "1-2"
 
-The sort key is ``(major, kind, sub_value, sub_text)`` where ``kind`` puts bare
-numbers before letter suffixes before numeric sub-numbers. Fractions are
-normalised (``1.50`` == ``1.5``) and compared as their fractional value, so
-``1.5`` (0.5) sorts before ``1-2`` (2). ``docs/DECISIONS.md`` records why.
+A token's key is ``(major, kind, sub_value, sub_text)``: bare numbers rank
+before letter suffixes before numeric sub-numbers, fractions are normalised
+(``1.50`` == ``1.5``) and compared by value, so ``1.5`` (0.5) sorts before
+``1-2`` (2). A filename's key is the tuple of its token keys, which makes
+``1 < 1a < 1b < 1.5 < 1-2 < 2`` fall out of ordinary tuple comparison.
 """
 
 from __future__ import annotations
@@ -32,9 +35,10 @@ MEDIA_EXTENSIONS: frozenset[str] = frozenset(
     {".mp4", ".mov", ".mkv", ".avi", ".webm", ".mxf", ".m4v"}
 )
 
-NumberRule = Literal["first", "last", "regex"]
+NumberRule = Literal["natural", "first", "last", "regex"]
 
 TokenKey = tuple[int, int, float, str]
+NumberKey = tuple[TokenKey, ...]
 
 _TOKEN_RE = re.compile(
     r"(?P<major>\d+)"
@@ -61,8 +65,8 @@ class NumberKind(IntEnum):
 
 
 @dataclass(frozen=True)
-class ParsedNumber:
-    """A clip number as written in a filename, plus its sort identity."""
+class NumberToken:
+    """One number as written in a filename."""
 
     raw: str
     major: int
@@ -72,7 +76,6 @@ class ParsedNumber:
 
     @property
     def sort_key(self) -> TokenKey:
-        """Total order for clip numbers; equal keys mean a duplicate."""
         if self.kind is NumberKind.BARE:
             text = ""
         elif self.kind is NumberKind.LETTER:
@@ -86,6 +89,56 @@ class ParsedNumber:
         if self.kind is NumberKind.BARE:
             return f"{self.major}"
         return f"{self.major} ({self.kind.label} {self.sub_text})"
+
+
+@dataclass(frozen=True)
+class ParsedNumber:
+    """Every clip number in a filename, plus the ordering key they produce."""
+
+    tokens: tuple[NumberToken, ...]
+    rule: NumberRule = "natural"
+
+    @property
+    def chosen(self) -> NumberToken:
+        """The number shown in reports and used for gap detection."""
+        return self.tokens[-1] if self.rule == "last" else self.tokens[0]
+
+    @property
+    def raw(self) -> str:
+        return self.chosen.raw
+
+    @property
+    def major(self) -> int:
+        return self.chosen.major
+
+    @property
+    def kind(self) -> NumberKind:
+        return self.chosen.kind
+
+    @property
+    def sub_text(self) -> str | None:
+        return self.chosen.sub_text
+
+    @property
+    def sub_value(self) -> float | None:
+        return self.chosen.sub_value
+
+    @property
+    def sort_key(self) -> NumberKey:
+        """Total order for clip numbers; equal keys mean a duplicate.
+
+        ``natural`` keeps every token, so only filenames whose full number
+        sequence matches are duplicates. The other rules use the chosen token.
+        """
+        if self.rule == "natural":
+            return tuple(token.sort_key for token in self.tokens)
+        return (self.chosen.sort_key,)
+
+    def describe(self) -> str:
+        if self.rule == "natural" and len(self.tokens) > 1:
+            shown = ", ".join(token.describe() for token in self.tokens[:3])
+            return shown if len(self.tokens) <= 3 else f"{shown}, ..."
+        return self.chosen.describe()
 
 
 def strip_media_extension(filename: str) -> str:
@@ -103,14 +156,14 @@ def _subgroup_value(text: str, *, fractional: bool) -> float:
     return float(text)
 
 
-def _from_match(match: re.Match[str]) -> ParsedNumber:
+def _from_match(match: re.Match[str]) -> NumberToken:
     major = int(match.group("major"))
     fraction = match.group("frac")
     alpha = match.group("alpha")
     ran = match.group("range")
 
     if fraction is not None:
-        return ParsedNumber(
+        return NumberToken(
             raw=match.group(0),
             major=major,
             kind=NumberKind.NUMERIC,
@@ -118,7 +171,7 @@ def _from_match(match: re.Match[str]) -> ParsedNumber:
             sub_value=_subgroup_value(fraction, fractional=True),
         )
     if ran is not None:
-        return ParsedNumber(
+        return NumberToken(
             raw=match.group(0),
             major=major,
             kind=NumberKind.NUMERIC,
@@ -126,16 +179,16 @@ def _from_match(match: re.Match[str]) -> ParsedNumber:
             sub_value=_subgroup_value(ran, fractional=False),
         )
     if alpha:
-        return ParsedNumber(
+        return NumberToken(
             raw=match.group(0),
             major=major,
             kind=NumberKind.LETTER,
             sub_text=alpha.lower(),
         )
-    return ParsedNumber(raw=match.group(0), major=major)
+    return NumberToken(raw=match.group(0), major=major)
 
 
-def tokenize(name: str) -> list[ParsedNumber]:
+def tokenize(name: str) -> list[NumberToken]:
     """Every clip-number token found in ``name``, left to right."""
     return [_from_match(match) for match in _TOKEN_RE.finditer(name)]
 
@@ -163,13 +216,14 @@ def _captured(match: re.Match[str]) -> str | None:
 def parse_filename(
     filename: str,
     *,
-    rule: NumberRule = "first",
+    rule: NumberRule = "natural",
     number_regex: str | None = None,
 ) -> ParsedNumber | None:
     """Return the clip number for ``filename``, or None when it has none.
 
-    ``rule`` selects the first number token, the last one, or the text captured
-    by ``number_regex`` (group ``number`` when present, else group 1).
+    ``natural`` compares every number in the name (the default), ``first`` and
+    ``last`` pick one, and ``regex`` uses the text captured by ``number_regex``
+    (group ``number`` when present, else group 1).
     """
     stem = strip_media_extension(filename)
 
@@ -183,9 +237,11 @@ def parse_filename(
         if captured is None:
             return None
         tokens = tokenize(captured)
-        return tokens[0] if tokens else None
+        if not tokens:
+            return None
+        return ParsedNumber(tokens=(tokens[0],), rule="regex")
 
     tokens = tokenize(stem)
     if not tokens:
         return None
-    return tokens[-1] if rule == "last" else tokens[0]
+    return ParsedNumber(tokens=tuple(tokens), rule=rule)

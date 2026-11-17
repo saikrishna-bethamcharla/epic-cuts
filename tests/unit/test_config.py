@@ -12,7 +12,7 @@ from autocut.errors import InputError
 
 def test_defaults() -> None:
     config = load_config(None)
-    assert config.ordering.number_rule == "first"
+    assert config.ordering.number_rule == "natural"
     assert config.ordering.recursive is False
     assert config.run.strict is False
     assert config.log.level == "info"

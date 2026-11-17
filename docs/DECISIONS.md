@@ -115,3 +115,45 @@ for commit `161f979` finished `success` on all six jobs (ubuntu-latest,
 macos-latest, windows-latest x Python 3.11, 3.12). No failures needed fixing, so
 the only change for this task is the status badge in the README plus this record.
 `autocut doctor` in CI confirms FFmpeg is present on every runner.
+
+## D19 — Natural ordering is the default: compare every number in the name
+
+`S01E01` vs `S01E02` and `Scene2_Shot1` vs `Scene2_Shot3` are ordinary
+sequences, not duplicates, so the default key is the *tuple of every number
+token* in the filename. Tuple comparison then gives the required
+`1 < 1a < 1b < 1.5 < 1-2 < 2` for free and keeps episode/shot numbering honest.
+
+`--number-rule first|last|regex` remain as explicit overrides and narrow the key
+to one chosen number, which is what a user asking for "the last number" wants.
+A duplicate is reported only when the whole key is identical (`Scene2_Shot1` and
+`Scene2_Shot01`), never merely because the leading numbers match.
+
+Gap detection still uses the leading number, because that is the sequence the
+user numbers (`1, 1a, 3` really is missing 2).
+
+## D20 — Fast fingerprint by default, `--full-hash` when identity matters
+
+Hashing every source on every run costs minutes on real footage and the analysis
+cache only needs to notice *change*. The default fingerprint is
+`fast:<size>:<mtime_ns>:<blake2b-128 of first and last 4 MiB>`:
+
+- cheap even on multi-gigabyte files (reads at most 8 MiB),
+- catches truncation, replacement, appends and most re-encodes,
+- deliberately cannot see an edit that changes only the middle of a large file,
+  and changes when a file is merely touched (mtime).
+
+`--full-hash` switches to `sha256:<hex>` over the whole file for content identity
+that survives copies and mtime changes. Tests pin both behaviours, including the
+middle-edit blind spot, so the trade-off stays documented rather than surprising.
+
+## D21 — Integer frames are canonical in the Cut List
+
+The Cut List stores `src_in_frame`, `src_out_frame`, `rec_in_frame` and
+`rec_out_frame`, and every seconds field is derived (`frame * den / num`, 6
+decimals). Float seconds accumulate error across a long assembly and make
+frame-accurate conforming impossible to verify; integer frame indices are exact,
+diff cleanly in review, and map 1:1 onto EDL/XML timecodes in M4.
+
+Conversion uses exact rationals (`Fraction`) with half-up rounding, and the
+property test at 24, 25, 30000/1001, 60000/1001 and 50 fps asserts that `rec_*`
+frames are contiguous and that `timeline.frames == sum(segments[].frames)`.

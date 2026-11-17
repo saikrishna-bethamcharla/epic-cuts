@@ -151,7 +151,9 @@ def order(
     ] = False,
     number_rule: Annotated[
         str | None,
-        typer.Option("--number-rule", help="Which number to use: first, last, regex."),
+        typer.Option(
+            "--number-rule", help="Which number to use: natural, first, last, regex."
+        ),
     ] = None,
     number_regex: Annotated[
         str | None,
@@ -204,7 +206,9 @@ def run(
     ] = False,
     number_rule: Annotated[
         str | None,
-        typer.Option("--number-rule", help="Which number to use: first, last, regex."),
+        typer.Option(
+            "--number-rule", help="Which number to use: natural, first, last, regex."
+        ),
     ] = None,
     number_regex: Annotated[
         str | None,

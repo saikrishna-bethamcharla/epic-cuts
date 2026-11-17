@@ -20,6 +20,7 @@ from autocut.ordering.discovery import discover
 from autocut.ordering.parser import (
     NumberRule,
     ParsedNumber,
+    TokenKey,
     parse_filename,
     validate_number_regex,
 )
@@ -210,7 +211,7 @@ def _find_gaps(majors: set[int]) -> tuple[Gap, ...]:
 def _duplicates(
     numbered: Sequence[tuple[ParsedNumber, Path]],
 ) -> tuple[DuplicateGroup, ...]:
-    grouped: dict[tuple[int, int, float, str], list[tuple[ParsedNumber, Path]]] = {}
+    grouped: dict[tuple[TokenKey, ...], list[tuple[ParsedNumber, Path]]] = {}
     for number, path in numbered:
         grouped.setdefault(number.sort_key, []).append((number, path))
     duplicates = [
@@ -227,7 +228,7 @@ def _duplicates(
 def build_ordering(
     inputs: Sequence[Path | str],
     *,
-    number_rule: NumberRule = "first",
+    number_rule: NumberRule = "natural",
     number_regex: str | None = None,
     recursive: bool = False,
     unnumbered_policy: str = "end",

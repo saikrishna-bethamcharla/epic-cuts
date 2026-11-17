@@ -122,9 +122,12 @@ The clip number is read from the filename with its known media extension removed
 (`.mp4 .mov .mkv .avi .webm .mxf .m4v`, case-insensitive). A number token is
 `digits` + optional `.fraction` + optional 1-2 letter suffix + optional `-sub`.
 
-1. **First number wins** by default; `--number-rule last` uses the last one and
-   `--number-rule regex --number-regex 'E(\d+)'` uses the capture group (a group
-   named `number` is preferred when present).
+1. **Every number in the name is compared** by default (natural order), left to
+   right, so `S01E01` comes before `S01E02` and `Scene2_Shot1` before
+   `Scene2_Shot3`. `--number-rule first` uses only the first number,
+   `--number-rule last` the last one, and
+   `--number-rule regex --number-regex 'E(\d+)'` the capture group (a group named
+   `number` is preferred when present).
 2. Numbers are compared **numerically**, so `2` comes before `10`.
 3. Sub-numbers sort after the bare number:
    `1 < 1a < 1b < 1.5 < 1-2 < 2`. Fractions are normalised, so `1.50` equals `1.5`.
@@ -145,7 +148,7 @@ The clip number is read from the filename with its known media extension removed
 | 8 | `intro_part_2_final.mp4`, `intro_part_1_final.mp4` | part_1, part_2 |
 | 9 | `1.mp4`, `1a.mp4`, `1b.mp4`, `1.5.mp4`, `1-2.mp4`, `2.mp4` | 1, 1a, 1b, 1.5, 1-2, 2 |
 | 10 | `2.mp4`, `1.5.mp4`, `1b.mp4` | 1b, 1.5, 2 |
-| 11 | `S01E02.mp4`, `S01E01.mp4` | both number 1: duplicate reported, order E01, E02 — use `--number-rule last` for episode order |
+| 11 | `S01E02.mp4`, `S01E01.mp4` | S01E01, S01E02 (both numbers compared); `--number-rule first` would report a duplicate |
 | 12 | `3.mp4`, `3b.mp4`, `4.mp4` | 3, 3b, 4 |
 | 13 | `1.mp4`, `3.mp4` | 1, 3 with a **gap** at 2 |
 | 14 | `intro.mp4`, `outro.mov`, `1.mp4` | 1, intro, outro (unnumbered last, alphabetical) |
@@ -160,7 +163,7 @@ A single TOML file, overridden by any CLI flag:
 
 ```toml
 [ordering]
-number_rule = "first"     # first | last | regex
+number_rule = "natural"   # natural | first | last | regex
 number_regex = ""         # required when number_rule = "regex"
 recursive = false
 unnumbered_policy = "end" # end | error

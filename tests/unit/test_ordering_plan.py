@@ -46,6 +46,39 @@ def test_mixed_patterns_are_ordered_by_first_number(tmp_path: Path) -> None:
     ]
 
 
+def test_default_natural_order_orders_episodes_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    names = ["S01E02.mp4", "S01E01.mp4"]
+    assert ordered_names(names, tmp_path) == ["S01E01.mp4", "S01E02.mp4"]
+    result = build_ordering([tmp_path], prober=no_probe)
+    assert result.problems.duplicates == ()
+
+
+def test_default_natural_order_orders_scene_and_shot(tmp_path: Path) -> None:
+    names = ["Scene2_Shot3.mp4", "Scene2_Shot1.mp4"]
+    assert ordered_names(names, tmp_path) == ["Scene2_Shot1.mp4", "Scene2_Shot3.mp4"]
+    result = build_ordering([tmp_path], prober=no_probe)
+    assert result.problems.duplicates == ()
+
+
+def test_first_rule_reintroduces_the_episode_duplicate(tmp_path: Path) -> None:
+    make_clips(tmp_path, ["S01E01.mp4", "S01E02.mp4"])
+    result = build_ordering([tmp_path], prober=no_probe, number_rule="first")
+    assert len(result.problems.duplicates) == 1
+    assert set(result.problems.duplicates[0].files) == {"S01E01.mp4", "S01E02.mp4"}
+
+
+def test_duplicate_needs_an_identical_full_key(tmp_path: Path) -> None:
+    make_clips(tmp_path, ["Scene2_Shot1.mp4", "Scene2_Shot01.mp4", "Scene1_Shot1.mp4"])
+    result = build_ordering([tmp_path], prober=no_probe)
+    assert len(result.problems.duplicates) == 1
+    assert set(result.problems.duplicates[0].files) == {
+        "Scene2_Shot1.mp4",
+        "Scene2_Shot01.mp4",
+    }
+
+
 def test_number_rule_last_changes_the_order(tmp_path: Path) -> None:
     names = ["S01E02.mp4", "S01E01.mp4"]
     assert ordered_names(names, tmp_path, number_rule="last") == [

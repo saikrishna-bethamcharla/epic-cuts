@@ -165,6 +165,21 @@ def test_invalid_regex_is_reported_clearly() -> None:
         parse_filename("1.mp4", rule="regex", number_regex="([0-9")
 
 
+def test_natural_rule_keeps_every_number_in_the_key() -> None:
+    parsed = parse_filename("S01E07.mp4")
+    assert parsed is not None
+    assert [token.raw for token in parsed.tokens] == ["01", "07"]
+    assert parsed.sort_key == ((1, 0, 0.0, ""), (7, 0, 0.0, ""))
+    assert parsed.describe() == "1, 7"
+
+
+def test_first_rule_narrows_the_key_to_one_number() -> None:
+    parsed = parse_filename("S01E07.mp4", rule="first")
+    assert parsed is not None
+    assert parsed.sort_key == ((1, 0, 0.0, ""),)
+    assert parsed.describe() == "1"
+
+
 def test_describe_is_human_readable() -> None:
     assert parse_filename("3.mp4") is not None
     described = parse_filename("3.mp4")

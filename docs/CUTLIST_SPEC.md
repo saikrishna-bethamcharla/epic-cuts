@@ -6,17 +6,18 @@ reads an exporter's output back.
 
 Guarantees:
 
-- **Non-destructive.** Sources are never modified; cuts reference timestamps.
+- **Frames are canonical.** A cut point is an integer frame index; every seconds
+  value in the file is *derived* from frames. Seconds are convenience fields for
+  humans and JSON consumers, never the source of truth.
+- **Non-destructive.** Sources are never modified; cuts reference frame indices.
 - **Deterministic.** The same sources and settings produce a byte-identical file
-  modulo the `created_at` field.
-- **Complete settings.** Every parameter that influenced the result is recorded,
-  so a cut list can be reproduced and audited.
-- **Frame-accurate.** Times are seconds as decimals in the file, but each cut
-  point carries the frame index it was conformed to in the sequence timebase.
+  modulo `created_at`.
+- **Complete settings.** Every parameter that influenced the result is recorded.
+- **Two timebases.** `src_*_frame` is in the clip's own rate, `rec_*_frame` is on
+  the assembled sequence, so mixed-rate sources can be conformed exactly.
 
-Status: the ordering report (`ordering.json`, schema version 1) is implemented in
-M1; the Cut List below is frozen as the M3 contract and is written by
-`autocut analyze`.
+Status: written by `autocut analyze` (M2, detection only). Exporters consume it
+from M3/M4.
 
 ## Shape
 
@@ -38,8 +39,8 @@ M1; the Cut List below is frozen as the M3 contract and is written by
     "no_audio_policy": "keep",
     "audio_track": 0,
     "crossfade_ms": 10,
-    "number_rule": "first",
-    "preset": "podcast"
+    "number_rule": "natural",
+    "full_hash": false
   },
   "sequence": {
     "fps": "30000/1001",
@@ -52,26 +53,36 @@ M1; the Cut List below is frozen as the M3 contract and is written by
     {
       "order": 1,
       "source_path": "footage/01 - intro.mp4",
-      "source_hash": "sha256:9f2c...",
-      "duration": 83.2,
+      "source_hash": "fast:104857600:1731837060123456789:9f2c1b...",
+      "duration_frames": 2079,
+      "duration": 69.3356,
       "fps": "30000/1001",
       "width": 1920,
       "height": 1080,
       "audio_stream": 0,
       "warnings": [],
       "segments": [
-        { "src_in": 1.2, "src_out": 14.85, "rec_in": 1.2, "rec_out": 14.85, "frames": 409 },
-        { "src_in": 16.4, "src_out": 22.0, "rec_in": 14.85, "rec_out": 20.45, "frames": 167 }
+        {
+          "src_in_frame": 36,
+          "src_out_frame": 445,
+          "rec_in_frame": 0,
+          "rec_out_frame": 409,
+          "frames": 409,
+          "src_in": 1.2012,
+          "src_out": 14.8508,
+          "rec_in": 0.0,
+          "rec_out": 13.647
+        }
       ],
-      "markers": [{ "at": 1.2, "name": "01 - intro.mp4" }]
+      "markers": [{ "at_frame": 0, "at": 0.0, "name": "01 - intro.mp4" }]
     }
   ],
   "timeline": {
-    "duration": 61.42,
     "frames": 1840,
+    "duration": 61.395,
     "cuts": 12,
     "source_duration": 420.8,
-    "removed_duration": 359.38,
+    "removed_duration": 359.405,
     "removed_percent": 85.4
   }
 }
@@ -81,37 +92,44 @@ M1; the Cut List below is frozen as the M3 contract and is written by
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `schema_version` | int | 1 for this document; exporters reject unknown versions |
-| `created_at` | string | ISO 8601 UTC |
+| `schema_version` | int | 1 for this document; exporters reject newer versions |
 | `generator` | object | `name`, `version` |
-| `settings` | object | Every parameter used; unknown keys preserved verbatim |
-| `sequence.fps` | string | Rational, e.g. `"30000/1001"`; never a float |
-| `sequence.frame_rounding` | string | `"nearest"` \| `"floor"` for cut conforming |
-| `clips[].order` | int | 1-based position after sorting |
-| `clips[].source_hash` | string | Content hash of the source file |
-| `clips[].segments[]` | array | Keep segments: `src_in` < `src_out`, ascending, non-overlapping |
-| `clips[].segments[].rec_in` / `rec_out` | float | Position on the assembled timeline |
-| `clips[].segments[].frames` | int | Duration in whole sequence frames |
-| `clips[].markers[]` | array | Optional; default name is the filename |
-| `timeline.duration` | float | Sum of kept durations minus crossfade overlaps |
-| `timeline.removed_percent` | float | Rounded to one decimal |
+| `settings` | object | Every parameter used, including detector and padding |
+| `sequence.fps` | string | Rational (`"30000/1001"`), never a float |
+| `sequence.frame_rounding` | string | `"nearest"`: half frames round up |
+| `clips[].source_hash` | string | `fast:<size>:<mtime_ns>:<blake2b>` or `sha256:<hex>` with `--full-hash` |
+| `clips[].duration_frames` | int | Source length in the clip's own timebase |
+| `clips[].segments[].src_in_frame` | int | Inclusive start frame in the **source** rate |
+| `clips[].segments[].src_out_frame` | int | Exclusive end frame in the **source** rate |
+| `clips[].segments[].rec_in_frame` | int | Inclusive start on the **sequence** timeline |
+| `clips[].segments[].rec_out_frame` | int | Exclusive end on the **sequence** timeline |
+| `clips[].segments[].frames` | int | `rec_out_frame - rec_in_frame` |
+| `clips[].markers[].at_frame` | int | Sequence frame; `at` is derived |
 
 ## Rules
 
-1. **Segments** are sorted, non-overlapping and inside `[0, clip.duration]`.
-2. **No segment is shorter** than one sequence frame after conforming.
-3. **`rec_in`/`rec_out`** are contiguous: each segment starts where the previous
-   one ended (crossfades overlap audio only, not picture).
-4. **Mixed sources**: `sequence` holds the conformed format; `clips[]` keeps each
-   source's own `fps`, `width` and `height` so exporters can retime correctly.
-5. **Warnings** travel with the clip (missing audio, all-silence, VFR
-   normalisation), never in a separate side channel.
-6. **Consumers must ignore** unknown keys added by later minor versions, and must
+1. **Integers first.** `src_*` and `rec_*` frames are the stored values; `src_in`,
+   `src_out`, `rec_in`, `rec_out` and `at` are `frame * den / num`, rounded to 6
+   decimals.
+2. **Contiguous recording timeline.** Segment *n* has
+   `rec_in_frame == previous.rec_out_frame`, including across clip boundaries, and
+   the first segment starts at 0.
+3. **Totals agree.** `timeline.frames == sum(segments[].frames) ==` the last
+   `rec_out_frame`, and `timeline.duration == fps_den/fps_num * frames`.
+4. **In bounds.** `0 <= src_in_frame < src_out_frame <= duration_frames`; clips
+   are clipped to their own length, never beyond it.
+5. **No zero-length cuts.** After conforming, any segment shorter than one
+   sequence frame is dropped (or extended to one frame when it started non-empty).
+6. **Mixed sources.** `sequence` holds the conformed format; each clip keeps its
+   own `fps`, `width` and `height` so exporters can retime rather than assume.
+7. **Warnings travel with the clip** (missing audio, all-silence, unreadable),
+   never in a separate side channel.
+8. **Consumers must ignore** unknown keys added by later minor versions and must
    fail loudly on a newer `schema_version`.
 
 ## Frame-accuracy rules
 
-`t_frames = round(t * fps_num / fps_den)` with `round-half-up`, then
-`t = frames * fps_den / fps_num`. Cut points are snapped to this grid before
-`rec_in`/`rec_out` are computed. Tests assert that an EDL timecode and the frame
-count always agree, including at NTSC rates (`30000/1001`, `24000/1001`).
+`frames(t) = floor(t * num / den + 1/2)` (half up, computed with exact rationals
+so no float drift accumulates), and `seconds(f) = f * den / num`. Tests assert
+that frame indices round-trip at 24, 25, 30000/1001, 60000/1001 and 50 fps, and
+that EDL timecodes agree with frame counts at NTSC rates (M4).

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from autocut.errors import InputError
 
-NumberRuleName = Literal["first", "last", "regex"]
+NumberRuleName = Literal["natural", "first", "last", "regex"]
 
 
 class _Model(BaseModel):
@@ -25,7 +25,7 @@ class _Model(BaseModel):
 class OrderingSettings(_Model):
     """How filenames are numbered and read from disk (brief 3.1)."""
 
-    number_rule: NumberRuleName = "first"
+    number_rule: NumberRuleName = "natural"
     number_regex: str | None = None
     recursive: bool = False
     unnumbered_policy: Literal["end", "error"] = "end"
