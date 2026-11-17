@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autocut"
+version = "0.1.0"
+description = "Order numbered video clips, cut out silence, and export editor-ready timelines."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Sai Krishna Bethamcharla" }]
+keywords = ["ffmpeg", "video", "silence", "premiere", "resolve", "edl", "fcpxml"]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "natsort>=8.4",
+  "pydantic>=2.7",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.100",
+  "mypy>=1.11",
+  "pytest>=8.2",
+  "pytest-cov>=5",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+autocut = "autocut.cli:main"
+
+[project.urls]
+Repository = "https://github.com/saikrishna-bethamcharla/epic-cuts"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autocut"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "RUF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["autocut"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+files = ["src/autocut", "tests"]
+
+[[tool.mypy.overrides]]
+module = "natsort.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = ["slow: needs ffmpeg or a long-running media fixture"]
+
+[tool.coverage.run]
+branch = true
+source = ["autocut"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+]

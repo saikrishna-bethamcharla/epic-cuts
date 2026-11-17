@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Tool / editor state that must never be published
+.freebuff/
+.cloud-attachments/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Media produced while testing; fixtures are generated, not committed
+tests/fixtures/media/
+out/
+*.log
