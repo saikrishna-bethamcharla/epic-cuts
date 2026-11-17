@@ -107,3 +107,11 @@ The brief targets 85% on core packages. `fail_under = 85` is enforced through
 Named presets (`podcast`, `tutorial`, ...) are collections of *detection*
 settings. Shipping them before detectors exist would mean documenting flags that
 do nothing, so they land with M5 and the README says so.
+
+## D18 — CI baseline verified before M2 work started
+
+Workflow run [44032207626](https://github.com/saikrishna-bethamcharla/epic-cuts/actions/runs/44032207626)
+for commit `161f979` finished `success` on all six jobs (ubuntu-latest,
+macos-latest, windows-latest x Python 3.11, 3.12). No failures needed fixing, so
+the only change for this task is the status badge in the README plus this record.
+`autocut doctor` in CI confirms FFmpeg is present on every runner.

@@ -1,5 +1,7 @@
 # AutoCut
 
+[![CI](https://github.com/saikrishna-bethamcharla/epic-cuts/actions/workflows/ci.yml/badge.svg)](https://github.com/saikrishna-bethamcharla/epic-cuts/actions/workflows/ci.yml)
+
 Order a folder of numbered video clips by filename, cut out silence and pauses,
 and hand the result to Premiere Pro, DaVinci Resolve, Final Cut Pro or a
 rendered file.
