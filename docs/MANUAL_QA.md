@@ -30,6 +30,18 @@ three, `render` → any player):
 - [ ] Markers (when enabled) sit at the start of each source clip and are named
       after the file.
 
+## Detection checks (M2)
+
+- [ ] Run `autocut analyze` on a natural 10+ minute talking-head take (not the
+      repeated sample used for tuning) and read the removed percentage.
+- [ ] Listen at every cut: no clipped word onsets or trailing consonants. If
+      there are, raise `--pad-before`/`--pad-after` before touching thresholds.
+- [ ] Compare `--detector energy` with `--detector vad`: energy should keep more
+      material and miss short pauses; VAD should catch them.
+- [ ] Re-run with the same settings: the second run reports "from cache" and the
+      Cut List is byte-identical.
+- [ ] `--no-audio-policy skip` omits the silent clip; `error` exits 3.
+
 ## Edge cases
 
 - [ ] `F4-edge`: the no-audio clip follows `--no-audio-policy`, the silent clip is

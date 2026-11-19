@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vad = [
+  "numpy>=1.26",
+  "onnxruntime>=1.17",
+]
 dev = [
   "hypothesis>=6.100",
   "mypy>=1.11",
@@ -60,7 +64,7 @@ warn_redundant_casts = true
 files = ["src/autocut", "tests"]
 
 [[tool.mypy.overrides]]
-module = "natsort.*"
+module = ["natsort", "natsort.*", "onnxruntime", "onnxruntime.*", "webrtcvad"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

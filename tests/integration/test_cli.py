@@ -88,21 +88,26 @@ def test_run_dry_run_writes_both_reports(tmp_path: Path) -> None:
     assert "dry run: stopping before analysis" in result.stdout
 
 
-def test_run_without_dry_run_explains_the_milestone(tmp_path: Path) -> None:
-    make_clips(tmp_path, ["1.mp4"])
-    result = runner.invoke(app, ["run", str(tmp_path), "-o", str(tmp_path / "out")])
+def test_run_without_dry_run_writes_the_cutlist_then_stops(
+    tmp_path: Path, tone_clip: ClipBuilder
+) -> None:
+    tone_clip("1.mp4", seconds=1.0)
+    out = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        ["run", str(tmp_path), "-o", str(out), "--detector", "energy", "--no-cache"],
+    )
     assert result.exit_code == 3
-    assert "M2" in result.stderr
+    assert "M3" in result.stderr
+    assert (out / "cutlist.json").exists()
 
 
-def test_analyze_and_export_are_explicit_stubs(tmp_path: Path) -> None:
+def test_export_is_an_explicit_stub(tmp_path: Path) -> None:
     cutlist = tmp_path / "cutlist.json"
     cutlist.write_text("{}", encoding="utf-8")
-    analyze = runner.invoke(app, ["analyze", str(tmp_path)])
     export = runner.invoke(app, ["export", str(cutlist), "--format", "edl"])
-    assert analyze.exit_code == 3
     assert export.exit_code == 3
-    assert "milestones M0-M1" in analyze.stderr
+    assert "M3" in export.stderr and "M4" in export.stderr
 
 
 def test_doctor_reports_a_usable_environment(ffmpeg_available: bool) -> None:

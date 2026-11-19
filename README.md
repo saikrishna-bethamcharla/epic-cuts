@@ -9,10 +9,10 @@ rendered file.
 The core is a **library** with a thin CLI on top. Editor panels (Premiere UXP,
 Resolve, FCP) will talk to the same engine later; no UI code lives in the core.
 
-> **Status: M0 (setup) and M1 (ordering) are complete.** `autocut doctor`,
-> `autocut order` and `autocut run --dry-run` work. Silence detection (M2),
-> rendering (M3) and timeline exports (M4) are not implemented yet, and
-> `analyze`/`export`/`run` say so explicitly. See [Roadmap](#roadmap).
+> **Status: M0 (setup), M1 (ordering) and M2 (detection) are complete.**
+> `autocut doctor`, `order`, `analyze` and `run` work end to end through the Cut
+> List. Rendering (M3) and timeline exports (M4) are not implemented yet and say
+> so explicitly. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -96,7 +96,7 @@ the ordering decision is always reviewable and diffable.
 | `autocut doctor` | Check FFmpeg, ffprobe, versions and hardware encoders |
 | `autocut order INPUT...` | Ordering report only |
 | `autocut run INPUT... -o OUT` | Ordering, then analysis and export |
-| `autocut analyze INPUT...` | Cut list JSON only (M2) |
+| `autocut analyze INPUT...` | Detect silences and write the Cut List JSON |
 | `autocut export CUTLIST.json --format xmeml\|fcpxml\|edl\|render` | Export (M3-M4) |
 
 `INPUT` may be a folder, several folders, or explicit files. Folders are scanned
@@ -157,6 +157,36 @@ The clip number is read from the filename with its known media extension removed
 Containers are confirmed by ffprobe, not by extension, and clips that cannot be
 read are kept in the report and flagged so sequence gaps stay honest.
 
+## Detection
+
+Two detectors behind one interface, both returning *keep* segments:
+
+| Detector | Needs | Character |
+| --- | --- | --- |
+| `vad` (default) | `vad` extra (`onnxruntime`, `numpy`); Silero VAD v5 model ships with the package | Accurate on speech, catches short pauses |
+| `energy` | only ffmpeg | Fast, no heavy dependencies, only removes longer silences |
+
+```bash
+uv pip install -e ".[vad]"      # enable the VAD detector
+autocut analyze ./footage -o cutlist.json                       # Silero VAD
+autocut analyze ./footage -o cutlist.json --detector energy     # ffmpeg only
+```
+
+Shared post-processing runs in a fixed order: merge gaps shorter than
+`--min-silence`, drop speech shorter than `--min-speech`, pad with
+`--pad-before`/`--pad-after`, optionally cap pauses
+(`--shrink-pauses-to 0.3`), then optionally `--trim-head-tail`. Head and tail
+silence is kept unless you ask for it.
+
+Clips without audio, or entirely silent ones, follow `--no-audio-policy`
+(`keep`, `skip`, `error`) and the reason is attached to the clip's warnings.
+
+Analysis is cached by file fingerprint + detector + version + settings, so a
+second run is effectively instant (`--no-cache` to bypass, `--cache-dir` to
+move it, `--full-hash` for content identity instead of the fast fingerprint).
+`--jobs N` analyses clips in parallel processes, and one broken clip never stops
+the batch unless `--strict`.
+
 ## Configuration
 
 A single TOML file, overridden by any CLI flag:
@@ -168,9 +198,26 @@ number_regex = ""         # required when number_rule = "regex"
 recursive = false
 unnumbered_policy = "end" # end | error
 
+[analysis]
+detector = "vad"          # vad | energy
+threshold_db = -35.0      # energy threshold, dBFS
+min_silence = 0.5         # ignore pauses shorter than this
+min_speech = 0.15         # drop speech shorter than this
+speech_probability = 0.5  # VAD threshold per 32 ms frame
+pad_before = 0.18         # tuned in DECISIONS D26
+pad_after = 0.28
+trim_head_tail = false
+no_audio_policy = "keep"  # keep | skip | error
+
 [run]
 strict = false
 strict_warnings = false
+jobs = 0                  # 0 = one worker per core
+full_hash = false
+
+[cache]
+enabled = true
+# directory = "D:/autocut-cache"
 
 [log]
 level = "info"            # debug | info | warning | error | critical
@@ -191,6 +238,9 @@ arrive with the detection settings in M5.
 | Everything is unreadable | The files may be corrupt or have no video stream; `doctor` plus a manual `ffprobe` on one file will tell you |
 | Two clips swapped | They share a clip number (duplicate warning); rename one |
 | `error: strict mode: ...` | `--strict` aborts by design; drop it to continue with warnings |
+| `the VAD detector needs onnxruntime` | `uv pip install -e ".[vad]"`, or use `--detector energy` |
+| VAD finds no speech in quiet recordings | Lower `--speech-probability`-equivalent via `[analysis] speech_probability = 0.35` |
+| Cuts sound abrupt | Raise `--pad-before`/`--pad-after`, or use `--shrink-pauses-to 0.3` |
 
 ## Roadmap
 
@@ -198,8 +248,8 @@ arrive with the detection settings in M5.
 | --- | --- |
 | M0 Setup: repo, tooling, CI, `doctor` | done |
 | M1 Ordering: parser, report, `order`, `--dry-run` | done |
-| M2 Detection: energy + VAD, post-processing, cache | next |
-| M3 Cut list + FFmpeg renderer | planned |
+| M2 Detection: energy + VAD, post-processing, cache | done |
+| M3 Cut list + FFmpeg renderer | next |
 | M4 Timeline exports: xmeml, FCPXML, EDL | planned |
 | M5 Robustness, performance, presets, structured logs | planned |
 | M6 Single-file executable, release workflow | planned |

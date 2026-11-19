@@ -157,3 +157,92 @@ diff cleanly in review, and map 1:1 onto EDL/XML timecodes in M4.
 Conversion uses exact rationals (`Fraction`) with half-up rounding, and the
 property test at 24, 25, 30000/1001, 60000/1001 and 50 fps asserts that `rec_*`
 frames are contiguous and that `timeline.frames == sum(segments[].frames)`.
+
+## D22 — VAD backend on this machine (Windows 11 ARM64)
+
+Checked before writing the detector, not assumed:
+
+| Backend | Result |
+| --- | --- |
+| `onnxruntime` 1.32.0 | **installs and runs** (CPUExecutionProvider, wheels for win-arm64/cp312) |
+| Silero VAD v5 ONNX (bundled, 2.2 MB) | **works**: speech frames score 0.9-1.0 |
+| `webrtcvad` | **cannot build**: needs MSVC 14+ C toolchain on this machine |
+
+So Silero via ONNX Runtime is the default VAD, and webrtcvad stays as a fallback
+that is only used when it imports (it never runs here). Both are optional
+`vad` extra dependencies (`numpy`, `onnxruntime`); the energy detector needs only
+ffmpeg, so `--detector energy` always works.
+
+**Bug found while verifying:** feeding Silero raw 512-sample frames returns
+~0.001 probability for loud speech. Silero v5's ONNX graph expects
+`[64 samples of context, 512 new samples]` (576 wide, matching Silero's own
+`OnnxWrapper`). The scorer now keeps that context; a test asserts real speech is
+detected on the bundled fixture, so this cannot silently regress.
+
+## D23 — One Detector interface, one post-processing pass
+
+Both detectors return raw keep segments; merging, dropping blips, padding,
+shrinking pauses and head/tail trimming all live in `analysis/postprocess.py` and
+run in the brief's fixed order. Consequences worth knowing:
+
+- `min_speech` is also the VAD's minimum speech duration. Two knobs would let the
+  stages disagree about what speech is, so there is one.
+- Padding happens *after* the blip filter, so a 100 ms click cannot be resurrected
+  by padding.
+- Head and tail silence is **kept by default**; `--trim-head-tail` makes trimming
+  opt-in, which is what the brief's "optional" means and what a user assembling
+  clips usually wants.
+
+## D24 — Analysis cache: fingerprint + detector + settings + version
+
+Key = SHA-256 over `{fingerprint, detector, detector_version, settings, duration,
+has_audio, schema}`. Padding and pause-shrinking are in the key as well, so
+changing a threshold or a pad always misses instead of returning stale cuts.
+Corrupt or half-written entries are ignored, and `--no-cache` disables reads and
+writes. Measured on this machine with Silero on a 17 s clip: **189 ms uncached vs
+5 ms cached (~36x)**; the test asserts at least 10x on the VAD path, where the
+saving is real (the energy path is already fast).
+
+## D25 — Parallel analysis: process pool, per-clip isolation
+
+`--jobs` defaults to one worker per core, capped at the clip count; 0 or a
+negative value means "auto", and `--jobs 1` stays in-process. Each worker builds
+its own ONNX session and returns a plain dict, so nothing unpicklable crosses the
+boundary. A failing clip becomes an entry in `failures` and never stops the
+batch; `--strict` turns failures into an input error afterwards, and
+`--strict-warnings` exits 1.
+
+## D26 — Real-recording run and tuned padding defaults
+
+No natural 10-minute talking-head recording was available in this environment, so
+the validation used **real human speech with known ground truth**: the
+public-domain JFK sample (11 s) repeated 60 times with 1.2 s of inserted silence,
+muxed into a 12:12 video at 30 fps (732 s, 240 cuts, `--trim-head-tail`,
+Silero). "Clipped word" was measured as boundary RMS in a ±15 ms window above
+-40 dBFS, i.e. a cut landing in audible audio rather than in a pause.
+
+| Padding (before/after) | Removed | Boundaries inside audible audio | Loudest boundary |
+| --- | --- | --- | --- |
+| 0.12 / 0.18 (old default) | 24.5% | 195 / 480 | -39.0 dBFS |
+| 0.15 / 0.25 | 21.2% | 165 / 480 | -38.3 dBFS |
+| **0.18 / 0.28 (new default)** | **19.2%** | **30 / 480** | -38.3 dBFS |
+| 0.20 / 0.30 | 17.9% | 61 / 480 | -39.5 dBFS |
+| energy detector, 0.12/0.18 | 8.5% | 0 / 120 | none |
+
+Decisions from this:
+
+- **Padding defaults raised to 0.18 s before / 0.28 s after.** The share of cut
+  boundaries landing in audible audio drops from 41% to 6% for ~5 points less
+  silence removed. Larger padding stopped helping (0.20/0.30 regressed), so the
+  sweep, not a hunch, sets the value.
+- **No cut clips a word audibly.** Every boundary stays at or below -38 dBFS,
+  i.e. in room tone / the quiet tail of a word, not in a voiced peak (speech
+  peaks here are around -10 dBFS). The remaining "inside audio" hits are those
+  quiet tails.
+- **Energy needs no padding help but removes much less** (8.5%): at -35 dB it only
+  catches the long inserted pauses, not the short internal ones. That is the
+  intended trade-off between the two detectors, and why VAD is the default.
+- **Thresholds left alone** (-35 dB, 0.5 s silence, 0.15 s speech, 0.5
+  probability): the sweep showed padding, not threshold, was the lever.
+- **Caveat:** repeated sample audio is not a substitute for a natural 10-minute
+  take with interruptions and breaths. `docs/MANUAL_QA.md` keeps that check open.

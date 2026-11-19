@@ -7,10 +7,10 @@ rewriting the core.
 ```
 5  interface   cli.py            (later: local service, GUI, Premiere panel)
 4  export      export/*          (xmeml, fcpxml, edl, render)      [M3-M4]
-3  planning    planning/*        (Cut List, timeline builder)      [M3]
-2  analysis    analysis/*        (detectors, postprocess, cache)   [M2]
-1  media       media/*           (ffprobe, audio extraction, timebase)
-0  ordering    ordering/*        (filename numbers, discovery, report)
+3  planning    planning/*        cut list + frame timebase          done
+2  analysis    analysis/*        detectors, postprocess, cache, pool done
+1  media       media/*           ffprobe, fingerprint, tools        done
+0  ordering    ordering/*        filename numbers, discovery, report done
 ```
 
 `ordering` sits beside the media layer: it needs only filenames and, optionally,
@@ -29,9 +29,15 @@ ordering.plan.build_ordering()                OrderingResult: sorted OrderedItem
    │                                          + gaps, duplicates, unnumbered, unreadable
    ├── ordering.report.render_*()             human table / ordering.json
    ▼
-analysis (M2)                                 speech segments per clip
+analysis.audio.stream_pcm()                   16 kHz mono, chunked ffmpeg pipe
    ▼
-planning (M3)                                 Cut List (schema_version 1)
+analysis.{energy,vad}.detect()                raw keep segments per clip
+   ▼
+analysis.postprocess.postprocess()            merge, drop blips, pad, cap pauses, trim
+   ▼
+analysis.cache + runner                       JSON cache hit, process-pool isolation
+   ▼
+planning.cutlist.build_cutlist()              Cut List: integer source/rec frames
    ▼
 export (M3-M4)                                xmeml / FCPXML / EDL / rendered file
 ```
@@ -49,6 +55,15 @@ exporters never reach back into analysis or media state.
 | `autocut.config` | Validated settings (pydantic), TOML loading, CLI overrides |
 | `autocut.media.tools` | Locating ffmpeg/ffprobe, versions, hardware encoders |
 | `autocut.media.probe` | ffprobe JSON → `MediaInfo`; container support rules |
+| `autocut.media.fingerprint` | Fast (size/mtime/head+tail blake2b) or full SHA-256 |
+| `autocut.analysis.audio` | Chunked 16 kHz mono PCM pipe; never loads a whole file |
+| `autocut.analysis.energy` | `silencedetect` → keep segments |
+| `autocut.analysis.vad` | Silero v5 ONNX (64-sample context) or webrtcvad |
+| `autocut.analysis.postprocess` | The shared, ordered segment pipeline |
+| `autocut.analysis.cache` | Keyed analysis results on disk |
+| `autocut.analysis.runner` | Policies, cache use, parallel batch, isolation |
+| `autocut.planning.timebase` | Rational frame rate math |
+| `autocut.planning.cutlist` | Cut List model, frame conforming, JSON |
 | `autocut.ordering.parser` | Number extraction and the sort key |
 | `autocut.ordering.discovery` | Which files are candidates |
 | `autocut.ordering.plan` | Sorting, probing, problem collection |
@@ -67,14 +82,15 @@ exporters never reach back into analysis or media state.
   consume the same facts.
 - **No UI in the core.** Nothing below `cli.py` prints or prompts.
 
-## Adding a detector (M2)
+## Adding a detector
 
-1. Implement `detect(audio: AudioSource, settings: DetectorSettings) -> list[Segment]`
-   in `analysis/`, returning *keep* segments in seconds.
-2. Register it in the detector factory so `--detector <name>` resolves.
-3. Reuse `analysis.postprocess` (merge, drop short, pad, shrink pauses); do not
-   re-implement it per detector.
-4. Add fixtures with synthetic tone/silence and assert boundaries within 50 ms.
+1. Implement `detect(path, *, duration, settings) -> list[Segment]` in
+   `analysis/`, returning **raw** keep segments in seconds.
+2. Register the name in `analysis.runner.make_detector` so `--detector <name>`
+   resolves, and give it a `version` string (it is part of the cache key).
+3. Reuse `analysis.postprocess`; never re-implement merging or padding.
+4. Add a synthetic fixture with known boundaries and assert within 50 ms, plus a
+   unit test for the pure parsing/framing helpers.
 
 ## Adding an exporter (M4)
 

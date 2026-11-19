@@ -1,8 +1,8 @@
 """Validated settings, loaded from a TOML file and overridden by the CLI.
 
-Only settings that exist in this build are modelled: ``extra="forbid"`` makes a
-typo in the config file a clear input error instead of a silently ignored key.
-Detection, export and render settings join this module in M2/M3.
+``extra="forbid"`` makes a typo in the config file a clear input error instead of
+a silently ignored key. Only settings that this build actually uses are modelled;
+later milestones add their own groups.
 """
 
 from __future__ import annotations
@@ -13,9 +13,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from autocut.analysis.base import DetectorSettings
 from autocut.errors import InputError
 
 NumberRuleName = Literal["natural", "first", "last", "regex"]
+DetectorName = Literal["energy", "vad"]
+AudioPolicyName = Literal["keep", "skip", "error"]
 
 
 class _Model(BaseModel):
@@ -37,11 +40,57 @@ class OrderingSettings(_Model):
         return self
 
 
+class AnalysisSettings(_Model):
+    """Silence detection and post-processing (brief 3.2)."""
+
+    detector: DetectorName = "vad"
+    threshold_db: float = -35.0
+    min_silence: float = Field(default=0.5, ge=0.0)
+    min_speech: float = Field(default=0.15, ge=0.0)
+    speech_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    pad_before: float = Field(default=0.18, ge=0.0)
+    pad_after: float = Field(default=0.28, ge=0.0)
+    shrink_pauses_to: float | None = Field(default=None, ge=0.0)
+    trim_head_tail: bool = False
+    denoise_for_analysis: bool = False
+    audio_track: int | None = None
+    no_audio_policy: AudioPolicyName = "keep"
+
+    def to_detector_settings(self) -> DetectorSettings:
+        try:
+            return DetectorSettings(
+                threshold_db=self.threshold_db,
+                min_silence=self.min_silence,
+                min_speech=self.min_speech,
+                speech_probability=self.speech_probability,
+                pad_before=self.pad_before,
+                pad_after=self.pad_after,
+                shrink_pauses_to=self.shrink_pauses_to,
+                trim_head_tail=self.trim_head_tail,
+                denoise_for_analysis=self.denoise_for_analysis,
+                audio_track=self.audio_track,
+            )
+        except ValueError as exc:  # pragma: no cover - pydantic validates first
+            raise InputError(f"invalid analysis settings: {exc}") from exc
+
+    def as_cutlist_payload(self) -> dict[str, Any]:
+        return dict(self.model_dump(mode="json"))
+
+
 class RunSettings(_Model):
     """Run-wide behaviour."""
 
     strict: bool = False
     strict_warnings: bool = False
+    jobs: int = 0
+    full_hash: bool = False
+
+
+class CacheSettings(_Model):
+    """Analysis cache location and switch."""
+
+    enabled: bool = True
+    directory: Path | None = None
 
 
 class LogSettings(_Model):
@@ -51,7 +100,9 @@ class LogSettings(_Model):
 
 class Config(_Model):
     ordering: OrderingSettings = Field(default_factory=OrderingSettings)
+    analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     run: RunSettings = Field(default_factory=RunSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
     log: LogSettings = Field(default_factory=LogSettings)
 
 

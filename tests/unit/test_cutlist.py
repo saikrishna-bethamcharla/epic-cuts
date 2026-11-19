@@ -192,7 +192,10 @@ def test_property_rec_frames_are_contiguous_and_total_matches_sum(
     assert cutlist.total_frames == sum(segment.frames for segment in segments)
     assert cutlist.total_frames == cursor
     assert cutlist.duration == pytest.approx(timebase.seconds(cursor))
-    assert cutlist.duration <= cutlist.source_duration + 1e-9
+    # Conforming each cut to whole frames can add up to half a frame per segment;
+    # everything else about the kept duration is bounded by the source.
+    overshoot = 0.5 * max(len(segments), 1) / timebase.fps
+    assert cutlist.duration <= cutlist.source_duration + overshoot + 1e-9
 
     payload = cutlist.to_json()["clips"][0]["segments"]
     for segment, raw in zip(segments, payload, strict=False):

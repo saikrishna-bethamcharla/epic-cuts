@@ -34,6 +34,15 @@ class ClipBuilder(Protocol):
 
 
 @pytest.fixture(scope="session")
+def speech_wav() -> Path:
+    """1.568 s of continuous speech (public-domain JFK sample, see LICENSES)."""
+    path = Path(__file__).parent / "fixtures" / "speech" / "jfk_speech_1_5s.wav"
+    if not path.exists():  # pragma: no cover - fixture ships with the repo
+        pytest.skip(f"speech fixture missing: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
