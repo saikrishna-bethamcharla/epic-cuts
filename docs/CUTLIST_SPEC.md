@@ -16,8 +16,8 @@ Guarantees:
 - **Two timebases.** `src_*_frame` is in the clip's own rate, `rec_*_frame` is on
   the assembled sequence, so mixed-rate sources can be conformed exactly.
 
-Status: written by `autocut analyze` (M2, detection only). Exporters consume it
-from M3/M4.
+Status: written by `autocut analyze` and `autocut run`; consumed by the xmeml,
+FCPXML and EDL exporters and by the FFmpeg renderer (`autocut export`).
 
 ## Shape
 

@@ -6,8 +6,8 @@ rewriting the core.
 
 ```
 5  interface   cli.py            (later: local service, GUI, Premiere panel)
-4  export      export/*          (xmeml, fcpxml, edl, render)      [M3-M4]
-3  planning    planning/*        cut list + frame timebase          done
+4  export      export/*          xmeml, fcpxml, edl, render           done
+3  planning    planning/*        cut list, loader + frame timebase   done
 2  analysis    analysis/*        detectors, postprocess, cache, pool done
 1  media       media/*           ffprobe, fingerprint, tools        done
 0  ordering    ordering/*        filename numbers, discovery, report done
@@ -39,7 +39,9 @@ analysis.cache + runner                       JSON cache hit, process-pool isola
    ▼
 planning.cutlist.build_cutlist()              Cut List: integer source/rec frames
    ▼
-export (M3-M4)                                xmeml / FCPXML / EDL / rendered file
+planning.loader.load_cutlist()                validated frames, resolved sources
+   ▼
+exporters.* / render.ffmpeg                   xmeml / FCPXML / EDL / rendered file
 ```
 
 The **Cut List** is the contract between planning, export and every editor
@@ -64,6 +66,13 @@ exporters never reach back into analysis or media state.
 | `autocut.analysis.runner` | Policies, cache use, parallel batch, isolation |
 | `autocut.planning.timebase` | Rational frame rate math |
 | `autocut.planning.cutlist` | Cut List model, frame conforming, JSON |
+| `autocut.planning.loader` | Validated Cut List loading; source resolution |
+| `autocut.exporters.timecode` | SMPTE non-drop/drop-frame conversion |
+| `autocut.exporters.edl` | CMX 3600 events and text |
+| `autocut.exporters.xmeml` | FCP7 XML sequence |
+| `autocut.exporters.fcpxml` | FCPXML 1.10 project |
+| `autocut.exporters` | Format dispatch, extension inference |
+| `autocut.render.ffmpeg` | Filter-graph render, encoders, progress |
 | `autocut.ordering.parser` | Number extraction and the sort key |
 | `autocut.ordering.discovery` | Which files are candidates |
 | `autocut.ordering.plan` | Sorting, probing, problem collection |
@@ -92,15 +101,19 @@ exporters never reach back into analysis or media state.
 4. Add a synthetic fixture with known boundaries and assert within 50 ms, plus a
    unit test for the pure parsing/framing helpers.
 
-## Adding an exporter (M4)
+## Adding an exporter
 
-1. Take a validated Cut List object; never re-analyse media.
-2. Emit the format into the output folder and return the written path.
-3. Add a golden-file test plus a line in the manual QA checklist.
+1. Take a `LoadedCutList`; never re-analyse media.
+2. Return bytes from a pure `build_<format>()` function so it can be tested
+   without touching disk, and register the format in `exporters/__init__.py`
+   with a default suffix.
+3. Add a structure test plus a line in the manual QA checklist.
+4. Never trust extra keys; fail loudly on a newer `schema_version`.
 
 ## Engine API (M7 and later)
 
-The CLI is a thin wrapper over `build_ordering` and, from M3, the cut-list
-builder. A local service exposes `order`, `analyze`, `export`, `progress` and
-`cancel`; progress and cancellation must be threaded through these functions,
+The CLI is a thin wrapper over `build_ordering`, the analysis runner, the
+renderer and the exporters. A local service exposes `order`, `analyze`, `export`,
+`progress` and `cancel`; progress and cancellation must be threaded through
+these functions,
 not bolted onto the CLI.

@@ -1,8 +1,9 @@
 # Manual QA checklist
 
-Automated tests verify structure and frame maths. Only a real editor verifies
+Automated tests verify structure and frame maths, including that a rendered file
+lasts as long as the Cut List says (within two frames). Only a real editor verifies
 that a timeline actually imports. Run this list before releasing any milestone
-that changes an exporter (M4 onwards).
+that changes an exporter or the renderer.
 
 ## Fixtures
 
@@ -29,6 +30,23 @@ three, `render` → any player):
 - [ ] No audible click at joins with the 10 ms audio crossfade enabled.
 - [ ] Markers (when enabled) sit at the start of each source clip and are named
       after the file.
+
+## Render checks (M3)
+
+- [ ] `autocut run` writes `cutlist.json` and `autocut.mp4`; the player shows the
+      assembled duration from the Cut List, not the source duration.
+- [ ] Each join is on the intended frame when stepped through frame by frame.
+- [ ] No audible click or level jump at joins; `--crossfade-ms 0` should reintroduce
+      clicks on hard cuts, proving the fades are active.
+- [ ] A hardware encode (when `doctor` lists an encoder) produces the same
+      duration as `--no-hardware`; force a failing encoder with
+      `--encoder h264_nvenc` on a machine without a GPU to confirm the fallback
+      warning and the successful software render.
+- [ ] Mixed-resolution/rate fixture `F2-mixed` fills the frame without distortion
+      (letterbox/pillarbox, square pixels).
+- [ ] A no-audio clip renders with silent audio in a mixed assembly; an entirely
+      audio-less project renders video only.
+- [ ] Progress reaches 100% and the output is playable to the end.
 
 ## Detection checks (M2)
 

@@ -30,7 +30,13 @@ from autocut.errors import (
     EXIT_WARNINGS,
     AutocutError,
     InputError,
-    NotAvailableError,
+)
+from autocut.exporters import (
+    DEFAULT_SUFFIX,
+    ExportResult,
+    export_cutlist,
+    infer_format,
+    normalise_format,
 )
 from autocut.logging_utils import configure_logging
 from autocut.ordering.plan import OrderingResult, build_ordering
@@ -40,18 +46,14 @@ from autocut.ordering.report import (
     write_json_report,
 )
 from autocut.planning.cutlist import ClipInput, CutList, build_cutlist, write_cutlist
+from autocut.planning.loader import CutListSummary, load_cutlist
 from autocut.planning.timebase import Timebase
+from autocut.render.ffmpeg import ProgressCallback
 
 LOGGER = logging.getLogger(__name__)
 
 P = ParamSpec("P")
 R = TypeVar("R")
-
-LATER = (
-    "this build covers milestones M0-M2 (setup, ordering and silence detection). "
-    "Rendering lands in M3 and timeline exports in M4; use 'autocut analyze' to "
-    "produce the Cut List until then"
-)
 
 app = typer.Typer(
     add_completion=False,
@@ -149,6 +151,44 @@ NoCacheOpt = Annotated[
 CacheDirOpt = Annotated[
     Path | None, typer.Option("--cache-dir", help="Where analysis results are cached.")
 ]
+CodecOpt = Annotated[
+    str | None,
+    typer.Option("--codec", help="Video encoder, e.g. libx264, libx265 or prores_ks."),
+]
+CrfOpt = Annotated[
+    int | None, typer.Option("--crf", help="Quality (lower is better; 0-63).")
+]
+PresetOpt = Annotated[
+    str | None, typer.Option("--preset", help="Encoder speed preset (x264/x265).")
+]
+AudioBitrateOpt = Annotated[
+    str | None, typer.Option("--audio-bitrate", help="Audio bitrate, e.g. 192k.")
+]
+CrossfadeOpt = Annotated[
+    int | None,
+    typer.Option("--crossfade-ms", help="Audio fade at every join, in milliseconds."),
+]
+EncoderOpt = Annotated[
+    str | None,
+    typer.Option("--encoder", help="Force one encoder, e.g. h264_nvenc."),
+]
+HardwareOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--hardware/--no-hardware",
+        help="Try hardware encoders before software ones.",
+    ),
+]
+DropFrameOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--edl-drop-frame/--edl-non-drop",
+        help="Drop-frame timecode in the EDL (default: on at 29.97/59.94).",
+    ),
+]
+TitleOpt = Annotated[
+    str | None, typer.Option("--title", help="Sequence title recorded in the export.")
+]
 
 
 def guarded(func: Callable[P, R]) -> Callable[P, R]:
@@ -192,6 +232,14 @@ def _config(
     full_hash: bool = False,
     no_cache: bool = False,
     cache_dir: Path | None = None,
+    codec: str | None = None,
+    crf: int | None = None,
+    preset: str | None = None,
+    audio_bitrate: str | None = None,
+    crossfade_ms: int | None = None,
+    encoder: str | None = None,
+    hardware: bool | None = None,
+    edl_drop_frame: bool | None = None,
 ) -> Config:
     settings = apply_overrides(
         load_config(config),
@@ -217,6 +265,14 @@ def _config(
             "analysis.no_audio_policy": no_audio_policy,
             "cache.enabled": False if no_cache else None,
             "cache.directory": cache_dir,
+            "render.codec": codec,
+            "render.crf": crf,
+            "render.preset": preset,
+            "render.audio_bitrate": audio_bitrate,
+            "render.crossfade_ms": crossfade_ms,
+            "render.encoder": encoder,
+            "render.hardware": hardware,
+            "export.edl_drop_frame": edl_drop_frame,
         },
     )
     configure_logging(settings.log.level, settings.log.file)
@@ -350,6 +406,43 @@ def _finish(settings: Config, result: OrderingResult, batch: BatchResult) -> Non
         batch.failures or result.problems.has_problems
     ):
         raise typer.Exit(EXIT_WARNINGS)
+
+
+def _progress(label: str) -> ProgressCallback:
+    """Print a progress line at each 10% step instead of every frame."""
+    last = -1
+
+    def report(done: int, total: int) -> None:
+        nonlocal last
+        if total <= 0:
+            return
+        step = min(100, done * 100 // total) // 10 * 10
+        if step != last:
+            last = step
+            typer.echo(f"{label}: {step}%")
+
+    return report
+
+
+def _render(settings: Config, cutlist: Path, target: Path) -> ExportResult:
+    loaded = load_cutlist(cutlist)
+    result = export_cutlist(
+        loaded,
+        "render",
+        target,
+        render_settings=settings.render.to_render_settings(),
+        on_progress=_progress("rendering"),
+    )
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}")
+    return result
+
+
+def _report_export(result: ExportResult, duration: float) -> None:
+    if result.format == "render":
+        typer.echo(f"rendered {result.path} ({format_duration(duration)})")
+        return
+    typer.echo(f"exported {result.format}: {result.path} ({format_duration(duration)})")
 
 
 def _output_path(output: Path) -> Path:
@@ -513,8 +606,22 @@ def run(
     log_level: LogLevelOpt = None,
     strict: StrictOpt = False,
     strict_warnings: StrictWarnOpt = False,
+    render_assembly: Annotated[
+        bool,
+        typer.Option(
+            "--render/--no-render",
+            help="Render the assembled video after writing the Cut List.",
+        ),
+    ] = True,
+    codec: CodecOpt = None,
+    crf: CrfOpt = None,
+    preset: PresetOpt = None,
+    audio_bitrate: AudioBitrateOpt = None,
+    crossfade_ms: CrossfadeOpt = None,
+    encoder: EncoderOpt = None,
+    hardware: HardwareOpt = None,
 ) -> None:
-    """Order the clips, analyse them and write the Cut List."""
+    """Order the clips, remove silence, write the Cut List and render it."""
     settings = _config(
         config=config,
         log_level=log_level,
@@ -538,6 +645,13 @@ def run(
         full_hash=full_hash,
         no_cache=no_cache,
         cache_dir=cache_dir,
+        codec=codec,
+        crf=crf,
+        preset=preset,
+        audio_bitrate=audio_bitrate,
+        crossfade_ms=crossfade_ms,
+        encoder=encoder,
+        hardware=hardware,
     )
     result = _order(settings, inputs)
 
@@ -571,27 +685,93 @@ def run(
     cutlist_path = write_cutlist(cutlist, output_dir / "cutlist.json")
     _report_analysis(batch, cutlist)
     typer.echo(f"wrote {cutlist_path}")
+    if render_assembly:
+        rendered = _render(settings, cutlist_path, output_dir / "autocut.mp4")
+        _report_export(rendered, cutlist.duration)
     _finish(settings, result, batch)
-    raise NotAvailableError(LATER)
 
 
-@app.command()
+@app.command("export")
 @guarded
-def export(
+def export_command(
     cutlist: Annotated[Path, typer.Argument(metavar="CUTLIST.json")],
     format_: Annotated[
-        str,
-        typer.Option("--format", help="xmeml, fcpxml, edl or render."),
-    ],
-    output: Annotated[
-        Path | None, typer.Option("-o", "--output", help="Output file or folder.")
+        str | None,
+        typer.Option(
+            "--format",
+            help="xmeml, fcpxml, edl or render (inferred from the extension).",
+        ),
     ] = None,
+    output: Annotated[
+        Path | None, typer.Option("-o", "--output", help="Output file.")
+    ] = None,
+    title: TitleOpt = None,
+    edl_drop_frame: DropFrameOpt = None,
+    codec: CodecOpt = None,
+    crf: CrfOpt = None,
+    preset: PresetOpt = None,
+    audio_bitrate: AudioBitrateOpt = None,
+    crossfade_ms: CrossfadeOpt = None,
+    encoder: EncoderOpt = None,
+    hardware: HardwareOpt = None,
     config: ConfigOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
-    """Export a Cut List to a timeline or a rendered file (M3-M4)."""
-    del cutlist, format_, output, config, log_level
-    raise NotAvailableError(LATER)
+    """Export a Cut List as xmeml, FCPXML, EDL or a rendered video."""
+    settings = _config(
+        config=config,
+        log_level=log_level,
+        number_rule=None,
+        number_regex=None,
+        recursive=False,
+        strict=False,
+        strict_warnings=False,
+        codec=codec,
+        crf=crf,
+        preset=preset,
+        audio_bitrate=audio_bitrate,
+        crossfade_ms=crossfade_ms,
+        encoder=encoder,
+        hardware=hardware,
+        edl_drop_frame=edl_drop_frame,
+    )
+    if format_ is not None:
+        export_format = normalise_format(format_)
+    elif output is not None:
+        export_format = infer_format(output)
+    else:
+        choices = ", ".join(DEFAULT_SUFFIX)
+        raise InputError(
+            "pass --format with one of " + choices + ", or an output name whose "
+            "extension identifies the format"
+        )
+
+    source = Path(cutlist).expanduser()
+    target = output or source.with_suffix(DEFAULT_SUFFIX[export_format])
+    loaded = load_cutlist(source)
+    summary = CutListSummary.of(loaded)
+    typer.echo(
+        f"cut list: {summary.clips} clip(s), {summary.cuts} cut(s), "
+        f"{format_duration(summary.duration)}"
+    )
+    if summary.missing_sources and export_format != "render":
+        typer.echo(
+            f"warning: {len(summary.missing_sources)} source clip(s) not found; "
+            "the timeline still references them"
+        )
+
+    result = export_cutlist(
+        loaded,
+        export_format,
+        target,
+        render_settings=settings.render.to_render_settings(),
+        title=title or settings.export.title,
+        drop_frame=settings.export.edl_drop_frame,
+        on_progress=_progress("rendering") if export_format == "render" else None,
+    )
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}")
+    _report_export(result, loaded.duration_seconds)
 
 
 def _write_json(result: OrderingResult, path: Path) -> Path:

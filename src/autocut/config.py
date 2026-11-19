@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from autocut.analysis.base import DetectorSettings
 from autocut.errors import InputError
+from autocut.render.ffmpeg import RenderSettings
 
 NumberRuleName = Literal["natural", "first", "last", "regex"]
 DetectorName = Literal["energy", "vad"]
@@ -93,6 +94,40 @@ class CacheSettings(_Model):
     directory: Path | None = None
 
 
+class RenderConfig(_Model):
+    """Encoder and assembly choices for the FFmpeg render."""
+
+    codec: str = "libx264"
+    crf: int = Field(default=18, ge=0, le=63)
+    preset: str = "medium"
+    audio_codec: str = "aac"
+    audio_bitrate: str = "192k"
+    crossfade_ms: int = Field(default=10, ge=0, le=5000)
+    hardware: bool = True
+    faststart: bool = True
+    encoder: str | None = None
+
+    def to_render_settings(self) -> RenderSettings:
+        return RenderSettings(
+            codec=self.codec,
+            crf=self.crf,
+            preset=self.preset,
+            audio_codec=self.audio_codec,
+            audio_bitrate=self.audio_bitrate,
+            crossfade_ms=self.crossfade_ms,
+            hardware=self.hardware,
+            faststart=self.faststart,
+            encoder=self.encoder,
+        )
+
+
+class ExportSettings(_Model):
+    """Timeline export conventions."""
+
+    edl_drop_frame: bool | None = None
+    title: str | None = None
+
+
 class LogSettings(_Model):
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
     file: Path | None = None
@@ -101,6 +136,8 @@ class LogSettings(_Model):
 class Config(_Model):
     ordering: OrderingSettings = Field(default_factory=OrderingSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
+    render: RenderConfig = Field(default_factory=RenderConfig)
+    export: ExportSettings = Field(default_factory=ExportSettings)
     run: RunSettings = Field(default_factory=RunSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
     log: LogSettings = Field(default_factory=LogSettings)

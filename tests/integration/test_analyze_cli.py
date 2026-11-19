@@ -200,9 +200,7 @@ def test_analyze_on_empty_folder_is_an_input_error(tmp_path: Path) -> None:
     assert "no readable clips" in result.stderr
 
 
-def test_run_without_dry_run_writes_the_cutlist_then_stops(
-    clips: Path, tmp_path: Path
-) -> None:
+def test_run_writes_the_cutlist_and_renders(clips: Path, tmp_path: Path) -> None:
     out = tmp_path / "out"
     result = runner.invoke(
         app,
@@ -214,12 +212,14 @@ def test_run_without_dry_run_writes_the_cutlist_then_stops(
             "--detector",
             "energy",
             "--no-cache",
+            "--no-hardware",
         ],
     )
-    assert result.exit_code == 3
-    assert "M3" in result.stderr
+    assert result.exit_code == 0, result.stderr
     payload = json.loads((out / "cutlist.json").read_text(encoding="utf-8"))
     assert payload["clips"]
+    assert (out / "autocut.mp4").stat().st_size > 0
+    assert "rendered" in result.stdout
 
 
 def test_strict_aborts_before_analysis(tmp_path: Path) -> None:

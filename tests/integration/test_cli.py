@@ -88,26 +88,35 @@ def test_run_dry_run_writes_both_reports(tmp_path: Path) -> None:
     assert "dry run: stopping before analysis" in result.stdout
 
 
-def test_run_without_dry_run_writes_the_cutlist_then_stops(
+def test_run_without_dry_run_writes_the_cutlist_and_renders(
     tmp_path: Path, tone_clip: ClipBuilder
 ) -> None:
     tone_clip("1.mp4", seconds=1.0)
     out = tmp_path / "out"
     result = runner.invoke(
         app,
-        ["run", str(tmp_path), "-o", str(out), "--detector", "energy", "--no-cache"],
+        [
+            "run",
+            str(tmp_path),
+            "-o",
+            str(out),
+            "--detector",
+            "energy",
+            "--no-cache",
+            "--no-hardware",
+        ],
     )
-    assert result.exit_code == 3
-    assert "M3" in result.stderr
+    assert result.exit_code == 0, result.stderr
     assert (out / "cutlist.json").exists()
+    assert (out / "autocut.mp4").stat().st_size > 0
 
 
-def test_export_is_an_explicit_stub(tmp_path: Path) -> None:
+def test_export_rejects_an_unknown_format(tmp_path: Path) -> None:
     cutlist = tmp_path / "cutlist.json"
     cutlist.write_text("{}", encoding="utf-8")
-    export = runner.invoke(app, ["export", str(cutlist), "--format", "edl"])
-    assert export.exit_code == 3
-    assert "M3" in export.stderr and "M4" in export.stderr
+    export = runner.invoke(app, ["export", str(cutlist), "--format", "aaf"])
+    assert export.exit_code == 2
+    assert "unknown export format" in export.stderr
 
 
 def test_doctor_reports_a_usable_environment(ffmpeg_available: bool) -> None:

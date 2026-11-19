@@ -9,10 +9,10 @@ rendered file.
 The core is a **library** with a thin CLI on top. Editor panels (Premiere UXP,
 Resolve, FCP) will talk to the same engine later; no UI code lives in the core.
 
-> **Status: M0 (setup), M1 (ordering) and M2 (detection) are complete.**
-> `autocut doctor`, `order`, `analyze` and `run` work end to end through the Cut
-> List. Rendering (M3) and timeline exports (M4) are not implemented yet and say
-> so explicitly. See [Roadmap](#roadmap).
+> **Status: M0-M4 are complete.** `autocut doctor`, `order`, `analyze`, `run`
+> and `export` work end to end: numbered clips are ordered, silence is removed,
+> the Cut List is written, and the result is either rendered to one file or
+> exported as an xmeml, FCPXML or EDL timeline. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -95,9 +95,9 @@ the ordering decision is always reviewable and diffable.
 | --- | --- |
 | `autocut doctor` | Check FFmpeg, ffprobe, versions and hardware encoders |
 | `autocut order INPUT...` | Ordering report only |
-| `autocut run INPUT... -o OUT` | Ordering, then analysis and export |
-| `autocut analyze INPUT...` | Detect silences and write the Cut List JSON |
-| `autocut export CUTLIST.json --format xmeml\|fcpxml\|edl\|render` | Export (M3-M4) |
+| `autocut run INPUT... -o OUT` | Order, analyse, write the Cut List and render `OUT/autocut.mp4` |
+| `autocut analyze INPUT...` | Detect silences and write the Cut List JSON only |
+| `autocut export CUTLIST.json --format xmeml\|fcpxml\|edl\|render` | Export a saved Cut List as a timeline or video |
 
 `INPUT` may be a folder, several folders, or explicit files. Folders are scanned
 non-recursively unless `--recursive` is given. Hidden files and folders are
@@ -105,7 +105,8 @@ skipped, and non-media files are listed as ignored rather than silently dropped.
 
 Key options: `--number-rule first|last|regex`, `--number-regex`,
 `--recursive`, `--json-out`, `--config`, `--log-level`, `--strict`,
-`--strict-warnings`, `--dry-run`.
+`--strict-warnings`, `--dry-run`, `--render/--no-render`, `--codec`, `--crf`,
+`--preset`, `--encoder`, `--hardware/--no-hardware`, `--crossfade-ms`.
 
 ### Exit codes
 
@@ -187,6 +188,44 @@ move it, `--full-hash` for content identity instead of the fast fingerprint).
 `--jobs N` analyses clips in parallel processes, and one broken clip never stops
 the batch unless `--strict`.
 
+## Rendering and timeline export
+
+`autocut run` writes `OUT/autocut.mp4` as well as `cutlist.json`. Pass
+`--no-render` to stop after the Cut List, or `--dry-run` to stop before analysis.
+A Cut List written earlier can be exported again at any time:
+
+```bash
+autocut export out/cutlist.json --format edl -o out/assembly.edl
+autocut export out/cutlist.json --format xmeml -o out/assembly.xml
+autocut export out/cutlist.json --format fcpxml -o out/assembly.fcpxml
+autocut export out/cutlist.json -o out/again.mp4        # format from the extension
+```
+
+| Format | Target | Notes |
+| --- | --- | --- |
+| `render` | any player | Frame-accurate `trim`/`concat`; one re-encode pass |
+| `xmeml` | Premiere Pro, DaVinci Resolve | FCP7 XML, native in/out per source |
+| `fcpxml` | Final Cut Pro, Resolve | FCPXML 1.10, rational time values |
+| `edl` | All three | CMX 3600; drop-frame at 29.97/59.94 by default |
+
+`--format` is inferred from the output extension when omitted. Every exporter
+refuses a Cut List that is newer than this build and validates the frame
+invariants first, so a hand-edited file cannot silently produce a broken
+timeline.
+
+The renderer rebuilds the timeline with FFmpeg's `trim`/`atrim` and `concat`
+filters, using integer source frames rather than seek seconds, so cuts land on
+exactly the frame the Cut List records. Sources are conformed to the sequence
+resolution and rate, and audio joins get a 10 ms fade (`--crossfade-ms`) to avoid
+clicks. Hardware encoders are used when `autocut doctor` lists them and fall
+back to `libx264` if the GPU rejects the encode. The EDL is single-rate by
+definition, so mixed-rate clips are conformed into the sequence's timecode;
+xmeml and FCPXML keep each clip's native frame positions.
+
+Use `--codec`, `--crf`, `--preset` and `--audio-bitrate` for quality, or
+`--encoder h264_nvenc` to force one encoder. Render progress is printed at 10%
+steps.
+
 ## Configuration
 
 A single TOML file, overridden by any CLI flag:
@@ -208,6 +247,20 @@ pad_before = 0.18         # tuned in DECISIONS D26
 pad_after = 0.28
 trim_head_tail = false
 no_audio_policy = "keep"  # keep | skip | error
+
+[render]
+codec = "libx264"         # libx264 | libx265 | prores_ks | hardware encoder
+crf = 18                  # quality; lower is better
+audio_bitrate = "192k"
+preset = "medium"
+crossfade_ms = 10          # audio fade at every join
+hardware = true            # try hardware encoders, fall back to software
+faststart = true           # +faststart for MP4/MOV
+# encoder = "h264_nvenc"   # force one encoder
+
+[export]
+# edl_drop_frame = true    # default: on at 29.97/59.94, off otherwise
+# title = "Episode 12"
 
 [run]
 strict = false
@@ -241,6 +294,10 @@ arrive with the detection settings in M5.
 | `the VAD detector needs onnxruntime` | `uv pip install -e ".[vad]"`, or use `--detector energy` |
 | VAD finds no speech in quiet recordings | Lower `--speech-probability`-equivalent via `[analysis] speech_probability = 0.35` |
 | Cuts sound abrupt | Raise `--pad-before`/`--pad-after`, or use `--shrink-pauses-to 0.3` |
+| Render is slower than expected | Try `--encoder h264_nvenc` (or another from `doctor`), raise `--preset`, or check that `--hardware` is on |
+| `error: source clip(s) not found` | The Cut List was moved away from its footage; keep `cutlist.json` beside the media or rerun `analyze` |
+| Timeline imports with media offline | The source files moved since the Cut List was written; export again from the same folder or relink in the editor |
+| EDL timecodes drift at 29.97 | Drop-frame is the default; pass `--edl-non-drop` only if your editor expects non-drop timecode |
 
 ## Roadmap
 
@@ -249,9 +306,9 @@ arrive with the detection settings in M5.
 | M0 Setup: repo, tooling, CI, `doctor` | done |
 | M1 Ordering: parser, report, `order`, `--dry-run` | done |
 | M2 Detection: energy + VAD, post-processing, cache | done |
-| M3 Cut list + FFmpeg renderer | next |
-| M4 Timeline exports: xmeml, FCPXML, EDL | planned |
-| M5 Robustness, performance, presets, structured logs | planned |
+| M3 Cut list + FFmpeg renderer | done |
+| M4 Timeline exports: xmeml, FCPXML, EDL | done |
+| M5 Robustness, performance, presets, structured logs | next |
 | M6 Single-file executable, release workflow | planned |
 | M7 Review UI | planned |
 | M8 Premiere UXP panel | planned |

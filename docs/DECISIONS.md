@@ -246,3 +246,65 @@ Decisions from this:
   probability): the sweep showed padding, not threshold, was the lever.
 - **Caveat:** repeated sample audio is not a substitute for a natural 10-minute
   take with interruptions and breaths. `docs/MANUAL_QA.md` keeps that check open.
+
+## D27 — One-pass FFmpeg render from integer frames
+
+The renderer feeds every source once into a single `-filter_complex` graph:
+`trim=start_frame=…:end_frame=…` selects the keep range by frame index (not a
+seek position), `setpts` restarts each segment at zero, `fps` conforms it to the
+sequence rate, and `scale`+`pad` fit mismatched sources. All segment outputs go
+through one `concat` filter and one encode.
+
+Alternatives rejected:
+
+- **Per-segment intermediate files + concat demuxer.** Doubles disk use and adds
+  temp-file cleanup failure modes; the demuxer also requires identical codecs and
+  parameters per chunk, which turns mixed-rate sources into a second workflow.
+- **`-ss`/`-to` input seeking.** Accurate only with re-encode, and keyframe
+  rounding differs between hardware and software decoders; frame numbers are
+  exact and match the Cut List.
+
+Audio uses `atrim` by source seconds (derived from the same frames), is resampled
+to the sequence rate and formatted to stereo, and gets a fade in/out of
+`crossfade_ms` (default 10 ms) at both ends of every segment. That removes the
+click at joins without making adjacent speech overlap. Clips with no audio track
+contribute an `anullsrc` segment so `concat` still sees equal stream counts; a
+Cut List with no audio at all renders video-only.
+
+Hardware encoders listed by `doctor` are tried first and the software encoder is
+always last, so a GPU that advertises an encoder but cannot run it costs one
+failed attempt, not the render. Quality flags are per encoder (`-crf` for x264,
+`-cq` for NVENC, `-global_quality` for QSV, `-qp_*` for AMF). Progress is read
+from `-progress pipe:1` on a background thread, and stderr is drained
+concurrently so a long encode cannot deadlock on a full pipe.
+
+## D28 — Timeline exports are pure functions over a validated Cut List
+
+`planning/loader.py` validates a Cut List before any exporter sees it: schema
+version, segment bounds, and a contiguous recording timeline. Relative
+`source_path` values resolve against the Cut List's folder, so a project folder
+can move as a unit. Exporters never probe media — a timeline can be exported for
+footage that is currently offline, and the editor relinks it.
+
+| Format | Fidelity | Timecode |
+| --- | --- | --- |
+| xmeml (FCP7, v5) | Native source in/out per clip; sequence frames for positions | nominal timebase + `ntsc` flag |
+| FCPXML 1.10 | Native source start; exact rational durations (`1001/30000s`) | `DF`/`NDF` on the sequence |
+| EDL (CMX 3600) | Single-rate: mixed sources conformed to sequence seconds | drop-frame by default at 29.97/59.94 |
+| render | Frame-exact pixels and audio | n/a |
+
+EDL drop-frame is implemented with the standard 2-per-minute (4 at 60 fps)
+label skip and tested as an exact inverse round trip, because an editor that
+reads DF labels against frame counts must not drift by minutes. `--edl-non-drop`
+forces non-drop for tools that expect it. EDL event durations are record-frame
+differences, so their total always equals `timeline.frames`.
+
+## D29 — Render defaults
+
+`libx264`, CRF 18, `medium`, AAC 192k, `+faststart`, 10 ms audio fades. CRF 18
+is visually transparent for screen and talking-head footage at a fraction of
+lossless size; `faststart` makes the MP4 previewable while it copies. These are
+starting points, not policy: `--codec`, `--crf`, `--preset`, `--audio-bitrate`
+and `--encoder` override them, and the `[render]` section records the same
+values for repeatable jobs. The Cut List does not store render settings, because
+changing an encoder must not change the timeline.
