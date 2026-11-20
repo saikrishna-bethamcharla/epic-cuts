@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,vad]"
+
+      - name: Tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "v$(python -c 'import autocut; print(autocut.__version__)')" = "$GITHUB_REF_NAME"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy
+
+      - name: Tests with coverage gate
+        run: pytest --cov --cov-report=term-missing
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: autocut-linux-x64
+            binary: autocut
+          - os: windows-latest
+            asset: autocut-windows-x64.exe
+            binary: autocut.exe
+          - os: macos-13
+            asset: autocut-macos-x64
+            binary: autocut
+          - os: macos-14
+            asset: autocut-macos-arm64
+            binary: autocut
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[vad,release]"
+
+      - name: Build single-file executable
+        shell: bash
+        run: pyinstaller packaging/autocut.spec --noconfirm --distpath dist --workpath build/pyinstaller
+
+      - name: Name the asset
+        shell: bash
+        run: |
+          mkdir -p release
+          mv "dist/${{ matrix.binary }}" "release/${{ matrix.asset }}"
+
+      - name: Smoke test the executable
+        shell: bash
+        run: |
+          ./release/${{ matrix.asset }} --version
+          ./release/${{ matrix.asset }} presets
+          ./release/${{ matrix.asset }} --help > /dev/null
+          ./release/${{ matrix.asset }} doctor
+
+      # Two clips force the process pool, which is what breaks first in a frozen
+      # build (multiprocessing.freeze_support), and VAD proves onnxruntime and
+      # the bundled model survived packaging.
+      - name: Smoke test detection inside the executable
+        shell: bash
+        run: |
+          mkdir -p build/smoke/footage
+          ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=black:s=320x240:r=30" \
+            -i tests/fixtures/speech/jfk_speech_1_5s.wav \
+            -filter_complex "[1:a]adelay=1000:all=1,apad=pad_dur=1.5[a]" \
+            -map 0:v -map "[a]" -t 4 -c:v libx264 -preset ultrafast -c:a aac -shortest \
+            build/smoke/footage/clip_1.mp4 -y
+          cp build/smoke/footage/clip_1.mp4 build/smoke/footage/clip_2.mp4
+          ./release/${{ matrix.asset }} analyze build/smoke/footage -o build/smoke/out --detector vad
+          test -s build/smoke/out/cutlist.json
+
+      - name: Software bill of materials
+        shell: bash
+        run: cyclonedx-py environment --of JSON -o "release/${{ matrix.asset }}.cdx.json"
+
+      - name: Checksum
+        shell: bash
+        run: |
+          cd release
+          sha256sum "${{ matrix.asset }}" "${{ matrix.asset }}.cdx.json" > "${{ matrix.asset }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: |
+          cd artifacts
+          cat *.sha256 | sort -k2 > SHA256SUMS.txt
+          rm -f *.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

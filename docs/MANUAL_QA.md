@@ -78,3 +78,21 @@ three, `render` → any player):
 - [ ] Re-running the same job twice yields identical reports.
 - [ ] A folder of 100 clips with 3 corrupt files completes; the 3 failures are
       reported and the rest are processed.
+
+## Packaged executable checks (M6)
+
+Run against a downloaded release asset (or `dist/autocut` from a local build):
+
+- [ ] `autocut --version` matches the release tag without `v`.
+- [ ] `autocut doctor` finds the system FFmpeg and lists the same encoders as the
+      Python install on the same machine.
+- [ ] `autocut presets` lists five presets.
+- [ ] `autocut analyze` on three or more clips uses the process pool (the log
+      says "analysing N clip(s) with N processes") and produces a Cut List with
+      `"detector": "vad"` — this is the check that catches a broken
+      `multiprocessing.freeze_support` or a missing Silero model.
+- [ ] The SHA-256 checksum matches, and the SBOM lists ONNX Runtime and the
+      expected dependency versions.
+- [ ] On macOS and Windows, the binary starts from a folder whose path contains
+      spaces and non-ASCII characters.
+- [ ] The binary runs on a machine with no Python and no `pip` installed.

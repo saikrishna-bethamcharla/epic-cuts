@@ -49,11 +49,28 @@ AutoCut calls `ffmpeg`/`ffprobe` through the user's `PATH`, so no FFmpeg code is
 redistributed. This is compatible with shipping AutoCut commercially even when
 the user's FFmpeg build is GPL (the common `gyan.dev` full build is GPLv3).
 
-**Before M6 packaging:** if an FFmpeg binary is bundled for a single-file
-executable, that binary's licence governs the bundle. Options are (a) ship an
-LGPL build with dynamic linking and the LGPL notice, or (b) ship a GPL build and
-licence the whole bundle accordingly. Verify the exact build's `--enable-gpl`
-flags and include the corresponding notices and source offer. Do not assume.
+The M6 executable does **not** bundle FFmpeg, so the GPL question does not arise
+for the released assets. If an FFmpeg binary is ever added to a bundle, that
+build's licence governs the bundle: ship an LGPL build with dynamic linking and
+the LGPL notice, or ship a GPL build and licence the whole bundle accordingly.
+Verify the exact build's `--enable-gpl` flags and include the corresponding
+notices and source offer. Do not assume.
+
+## Binary distribution (M6)
+
+`packaging/autocut.spec` builds one self-contained executable per platform
+(Windows x64, macOS arm64/x64, Linux x64). Python, Typer, pydantic, ONNX Runtime
+and the Silero model are inside it; FFmpeg is not.
+
+| Component | Licence | Note |
+| --- | --- | --- |
+| PyInstaller bootloader | GPL-2.0 **with the bootloader exception** | The exception explicitly permits packaging programs under other licences, so the executable stays MIT. PyInstaller is a build-time tool, not a runtime dependency. |
+| `cyclonedx-bom` | Apache-2.0 | Release tooling only; generates the SBOM shipped beside each asset. |
+| ONNX Runtime (bundled) | MIT | Same version as the `vad` extra. |
+| Silero VAD v5 ONNX model (bundled) | MIT | From snakers4/silero-vad. |
+
+Each release asset is accompanied by a CycloneDX SBOM and a SHA-256 checksum, so
+the bundled dependency set can be audited without unpacking the executable.
 
 ## Test fixtures
 
@@ -68,7 +85,8 @@ flags and include the corresponding notices and source offer. Do not assume.
 | --- | --- | --- | --- |
 | `soundfile` | BSD-3-Clause | M3 | Reading extracted audio for waveform review |
 | `webrtcvad` | MIT | optional | Fallback VAD; needs a C toolchain and cannot build on Windows ARM64 here |
-| `pyinstaller` or `nuitka` | GPL-2.0 with exception / Apache-2.0 | M6 | Single-file executable |
+| `pyinstaller` | GPL-2.0 with bootloader exception | shipped in M6 | Single-file executable (build-time only) |
+| `cyclonedx-bom` | Apache-2.0 | shipped in M6 | SBOM generation for releases |
 | `tauri` | MIT / Apache-2.0 | M7 | Optional review UI shell |
 
 Silero VAD model weights and the ONNX runtime are the two items the brief flags

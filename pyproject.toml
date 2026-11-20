@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autocut"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Order numbered video clips, cut out silence, and export editor-ready timelines."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,12 +35,20 @@ dev = [
   "pytest-cov>=5",
   "ruff>=0.6",
 ]
+release = [
+  "cyclonedx-bom>=6,<7",
+  "pyinstaller>=6.10",
+]
 
 [project.scripts]
 autocut = "autocut.cli:main"
 
 [project.urls]
 Repository = "https://github.com/saikrishna-bethamcharla/epic-cuts"
+
+[tool.hatch.version]
+# One source of truth: the release tag is checked against this value.
+path = "src/autocut/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/autocut"]

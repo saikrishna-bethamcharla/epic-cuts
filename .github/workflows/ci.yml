@@ -52,3 +52,44 @@ jobs:
 
       - name: Doctor
         run: autocut doctor
+
+  package:
+    name: Single-file executable smoke build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[vad,release]"
+
+      - name: Build executable
+        run: pyinstaller packaging/autocut.spec --noconfirm --distpath dist --workpath build/pyinstaller
+
+      # The spec and the frozen-model lookup only break at package time, and the
+      # release workflow runs on tags, so this keeps both exercised on every push.
+      - name: Run the executable
+        run: |
+          ./dist/autocut --version
+          ./dist/autocut presets
+          ./dist/autocut doctor
+
+      - name: Detection inside the executable
+        run: |
+          mkdir -p build/smoke/footage
+          ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=black:s=320x240:r=30" \
+            -i tests/fixtures/speech/jfk_speech_1_5s.wav \
+            -filter_complex "[1:a]adelay=1000:all=1,apad=pad_dur=1.5[a]" \
+            -map 0:v -map "[a]" -t 4 -c:v libx264 -preset ultrafast -c:a aac -shortest \
+            build/smoke/footage/clip_1.mp4 -y
+          cp build/smoke/footage/clip_1.mp4 build/smoke/footage/clip_2.mp4
+          ./dist/autocut analyze build/smoke/footage -o build/smoke/out --detector vad
+          test -s build/smoke/out/cutlist.json

@@ -18,6 +18,7 @@ install instead of failing obscurely.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -33,12 +34,29 @@ from autocut.analysis.base import DetectorSettings, DetectorUnavailableError, Se
 LOGGER = logging.getLogger(__name__)
 
 MODEL_FILENAME = "silero_vad.onnx"
-MODEL_PATH = Path(__file__).parent / "models" / MODEL_FILENAME
+MODEL_RELATIVE_PATH = Path("autocut") / "analysis" / "models" / MODEL_FILENAME
 INSTALL_HINT = 'uv pip install -e ".[vad]"  (onnxruntime + numpy)'
 
 SILERO_VERSION = "silero-vad-5-onnx"
 WEBRTC_VERSION = "webrtcvad-3"
 VAD_VERSION = SILERO_VERSION
+
+
+def bundled_model_path() -> Path:
+    """Locate the Silero model, including inside a PyInstaller one-file bundle.
+
+    PyInstaller unpacks ``datas`` under ``sys._MEIPASS`` and keeps the package
+    layout there, which is not where ``__file__`` points for a frozen module.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if isinstance(meipass, str):
+        frozen = Path(meipass) / MODEL_RELATIVE_PATH
+        if frozen.exists():
+            return frozen
+    return Path(__file__).parent / "models" / MODEL_FILENAME
+
+
+MODEL_PATH = bundled_model_path()
 
 
 class Scorer(Protocol):
@@ -69,7 +87,7 @@ class SileroScorer:
     context_samples = 64
 
     def __init__(self, model_path: Path | None = None) -> None:
-        self._model_path = Path(model_path or MODEL_PATH)
+        self._model_path = Path(model_path or bundled_model_path())
         self._session: Any | None = None
 
     def _load(self) -> Any:

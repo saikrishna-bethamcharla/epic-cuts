@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -119,3 +120,24 @@ def test_silero_model_ships_with_the_package() -> None:
 
     assert MODEL_PATH.exists(), f"bundled Silero model missing at {MODEL_PATH}"
     assert MODEL_PATH.stat().st_size > 1_000_000
+
+
+def test_bundled_model_path_uses_the_pyinstaller_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frozen = tmp_path / "autocut" / "analysis" / "models" / "silero_vad.onnx"
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(b"model")
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert vad_module.bundled_model_path() == frozen
+
+
+def test_bundled_model_path_falls_back_to_the_source_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An incomplete bundle must not shadow the real model.
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    source = Path(vad_module.__file__).parent / "models" / "silero_vad.onnx"
+    assert vad_module.bundled_model_path() == source

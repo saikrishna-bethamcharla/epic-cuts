@@ -9,10 +9,11 @@ rendered file.
 The core is a **library** with a thin CLI on top. Editor panels (Premiere UXP,
 Resolve, FCP) will talk to the same engine later; no UI code lives in the core.
 
-> **Status: M0-M4 are complete.** `autocut doctor`, `order`, `analyze`, `run`
+> **Status: M0-M6 are complete.** `autocut doctor`, `order`, `analyze`, `run`
 > and `export` work end to end: numbered clips are ordered, silence is removed,
 > the Cut List is written, and the result is either rendered to one file or
-> exported as an xmeml, FCPXML or EDL timeline. See [Roadmap](#roadmap).
+> exported as an xmeml, FCPXML or EDL timeline. Workflow presets, structured
+> JSON logs and single-file executables round it out. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -29,6 +30,33 @@ cd epic-cuts
 uv venv --python 3.12
 uv pip install -e ".[dev]"      # or: pip install -e .
 ```
+
+### Prebuilt executable
+
+Every tagged release publishes a single-file executable, so AutoCut can run
+without Python installed:
+
+| Platform | Asset |
+| --- | --- |
+| Windows x64 | `autocut-windows-x64.exe` |
+| macOS Apple silicon | `autocut-macos-arm64` |
+| macOS Intel | `autocut-macos-x64` |
+| Linux x64 | `autocut-linux-x64` |
+
+Download the asset, its `.sha256` checksum and its CycloneDX SBOM (`*.cdx.json`)
+from [Releases](https://github.com/saikrishna-bethamcharla/epic-cuts/releases),
+verify the digest, then run it:
+
+```bash
+sha256sum -c autocut-linux-x64.sha256
+chmod +x autocut-linux-x64
+./autocut-linux-x64 doctor
+```
+
+The executable bundles Python, Typer, pydantic, ONNX Runtime and the Silero VAD
+model, so `--detector vad` works with no install. **FFmpeg is not bundled**: it
+is still an external program looked up on `PATH`, which keeps the licence story
+to AutoCut's own MIT code (see [docs/LICENSES.md](docs/LICENSES.md)).
 
 Run the environment check first:
 
@@ -337,7 +365,7 @@ carries `ts`, `level`, `logger`, `message` and stage fields such as `clips`,
 | M3 Cut list + FFmpeg renderer | done |
 | M4 Timeline exports: xmeml, FCPXML, EDL | done |
 | M5 Robustness, performance, presets, structured logs | done |
-| M6 Single-file executable, release workflow | planned |
+| M6 Single-file executable, release workflow | done |
 | M7 Review UI | planned |
 | M8 Premiere UXP panel | planned |
 
@@ -359,6 +387,19 @@ ruff check .          # lint
 ruff format .         # format
 mypy                  # strict type check
 ```
+
+Build the executable the same way CI does (it lands in `dist/`):
+
+```bash
+pip install -e ".[vad,release]"
+pyinstaller packaging/autocut.spec --noconfirm --distpath dist
+./dist/autocut --version
+```
+
+Releases are cut by pushing a tag that matches `__version__` in
+`src/autocut/__init__.py` (`git tag v0.2.0 && git push origin v0.2.0`);
+`.github/workflows/release.yml` then builds every platform, smoke-tests each
+binary, and attaches the assets, checksums and SBOMs to the GitHub release.
 
 Source media is never modified: every output goes to the folder you pass with
 `-o`.

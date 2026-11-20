@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,40 @@ def make_request(
     target = tmp_path / name
     target.write_bytes(b"audio-bytes")
     return AnalysisRequest(path=target, duration=10.0, has_audio=has_audio)
+
+
+def test_a_dead_process_pool_falls_back_to_sequential_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class DeadPool:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise BrokenProcessPool("workers would not start")
+
+    monkeypatch.setattr(runner_module, "ProcessPoolExecutor", DeadPool)
+
+    def worker(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "path": payload["path"],
+            "duration": 4.0,
+            "fingerprint": "fake",
+            "segments": [(0.0, 1.0)],
+            "warnings": [],
+            "detector": "fake",
+            "detector_version": "1.0",
+            "cached": True,
+            "error": None,
+        }
+
+    monkeypatch.setattr(runner_module, "_worker", worker)
+
+    batch = analyze_clips(
+        [make_request(tmp_path, name="1.wav"), make_request(tmp_path, name="2.wav")],
+        settings=SETTINGS,
+        jobs=2,
+    )
+
+    assert [analysis.path.name for analysis in batch.analyses] == ["1.wav", "2.wav"]
+    assert batch.failures == ()
 
 
 def test_analyses_and_postprocesses(tmp_path: Path) -> None:

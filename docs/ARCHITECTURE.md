@@ -116,6 +116,16 @@ the Cut List so an analysis stays reproducible.
 3. Add a structure test plus a line in the manual QA checklist.
 4. Never trust extra keys; fail loudly on a newer `schema_version`.
 
+## Packaging
+
+`packaging/autocut.spec` freezes the package into one executable per platform.
+It collects the `autocut` submodules, adds the Silero model under
+`autocut/analysis/models` and excludes test and lint tooling. FFmpeg is not
+bundled; `media/tools.py` keeps resolving it on `PATH`, which is why `doctor`
+still matters for a released binary. `vad.bundled_model_path()` is the only
+frozen-aware code path: it prefers `sys._MEIPASS` and falls back to the source
+tree. Releases are tag-driven; see `docs/DECISIONS.md` D32.
+
 ## Engine API (M7 and later)
 
 The CLI is a thin wrapper over `build_ordering`, the analysis runner, the

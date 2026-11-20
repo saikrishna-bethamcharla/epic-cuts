@@ -11,6 +11,7 @@ import logging
 import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -354,13 +355,21 @@ def analyze_clips(
         }
         for request in requests
     ]
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        for index, payload in enumerate(pool.map(_worker, payloads), start=1):
-            analysis = _from_payload(payload)
-            if analysis.error:
-                failures.append((analysis.path, analysis.error))
-                LOGGER.warning("%s: %s", analysis.path, analysis.error)
-            record(analysis, index)
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_worker, payloads))
+    except (BrokenProcessPool, OSError) as exc:
+        # A frozen executable or a restricted sandbox can refuse to start
+        # workers; finishing the batch in-process beats crashing the run.
+        LOGGER.warning("process pool failed (%s); analysing sequentially", exc)
+        results = [_worker(payload) for payload in payloads]
+
+    for index, payload in enumerate(results, start=1):
+        analysis = _from_payload(payload)
+        if analysis.error:
+            failures.append((analysis.path, analysis.error))
+            LOGGER.warning("%s: %s", analysis.path, analysis.error)
+        record(analysis, index)
 
     return BatchResult(analyses=tuple(analyses), failures=tuple(failures))
 

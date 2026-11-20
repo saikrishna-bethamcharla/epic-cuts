@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import multiprocessing
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, ParamSpec, TypeVar
@@ -847,6 +848,9 @@ def _write_json(result: OrderingResult, path: Path) -> Path:
 
 def main() -> None:
     """Console-script entry point with a last-resort clean error."""
+    # A frozen build re-executes this executable for process-pool workers;
+    # without this call the child would parse the CLI again and die.
+    multiprocessing.freeze_support()
     try:
         app(prog_name="autocut")
     except AutocutError as exc:  # pragma: no cover - defensive

@@ -348,3 +348,36 @@ single line.
 Partial renders are deleted on failure, cancellation or an exhausted encoder
 list: a truncated MP4 is otherwise indistinguishable from a finished one, and a
 stale file from an earlier run must not look like the new result.
+
+## D32 — PyInstaller one-file builds, with FFmpeg left outside the bundle
+
+M6 ships one executable per platform, built on native runners by
+`packaging/autocut.spec` and published by `.github/workflows/release.yml`
+(Windows x64, macOS arm64, macOS x64, Linux x64). PyInstaller was chosen over
+Nuitka because its bootloader carries an explicit exception that allows
+packaging programs under any licence, so the executable stays MIT while the
+build tool stays GPL-2.0-with-exception (docs/LICENSES.md). Nuitka's compile
+times and cross-platform C toolchain requirements buy nothing here: the binary
+only needs to start Python, not run faster than CPython.
+
+FFmpeg stays a separate program found on `PATH`. Bundling it would drag the
+`gyan.dev` full build's GPLv3 into the asset and force the whole distribution to
+be GPL; the licence question is settled once, in D15 and LICENSES.md, and the
+executable inherits that answer.
+
+Consequences:
+
+- `vad.bundled_model_path()` looks in `sys._MEIPASS/autocut/analysis/models`
+  first, because a frozen module's `__file__` does not point at unpacked data.
+  The source tree is the fallback, so an incomplete bundle cannot break VAD.
+- The Silero model and ONNX Runtime are inside the executable (both MIT), so
+  `--detector vad` works on a machine with no Python packages installed.
+- Builds are per-OS on native runners; there is no cross compilation. macOS
+  Intel (`macos-13`) and Apple silicon (`macos-14`) are separate assets.
+- `version` is now dynamic in `pyproject.toml`, read from
+  `src/autocut/__init__.py`. The release workflow refuses a tag that does not
+  equal `v<__version__>`, so assets cannot claim a version the code does not
+  have.
+- Every asset gets a CycloneDX SBOM and a SHA-256 checksum, and the workflow
+  smoke-tests `--version`, `presets`, `--help` and `doctor` before publishing.
+  CI builds the same spec on every push so packaging cannot rot between tags.
