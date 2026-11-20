@@ -94,6 +94,7 @@ the ordering decision is always reviewable and diffable.
 | Command | Purpose |
 | --- | --- |
 | `autocut doctor` | Check FFmpeg, ffprobe, versions and hardware encoders |
+| `autocut presets` | List the built-in workflow presets |
 | `autocut order INPUT...` | Ordering report only |
 | `autocut run INPUT... -o OUT` | Order, analyse, write the Cut List and render `OUT/autocut.mp4` |
 | `autocut analyze INPUT...` | Detect silences and write the Cut List JSON only |
@@ -104,9 +105,10 @@ non-recursively unless `--recursive` is given. Hidden files and folders are
 skipped, and non-media files are listed as ignored rather than silently dropped.
 
 Key options: `--number-rule first|last|regex`, `--number-regex`,
-`--recursive`, `--json-out`, `--config`, `--log-level`, `--strict`,
-`--strict-warnings`, `--dry-run`, `--render/--no-render`, `--codec`, `--crf`,
-`--preset`, `--encoder`, `--hardware/--no-hardware`, `--crossfade-ms`.
+`--recursive`, `--json-out`, `--config`, `--profile`, `--log-level`, `--log-json`,
+`--strict`, `--strict-warnings`, `--dry-run`, `--render/--no-render`, `--codec`,
+`--crf`, `--preset`, `--encoder`, `--hardware/--no-hardware`, `--crossfade-ms`.
+`--preset` is the encoder speed preset; `--profile` is the workflow preset below.
 
 ### Exit codes
 
@@ -116,6 +118,26 @@ Key options: `--number-rule first|last|regex`, `--number-regex`,
 | 1 | Finished, but warnings were reported (`--strict-warnings`) |
 | 2 | User input error (missing path, bad config, `--strict` abort) |
 | 3 | Processing error (unreadable media, missing FFmpeg, unsupported request) |
+
+## Presets
+
+`--profile NAME`, or `profile = "NAME"` at the top of the config file, applies a
+starting point for detection and render settings:
+
+| Profile | Best for | What it changes |
+| --- | --- | --- |
+| `podcast` | Interviews, two-person shows | VAD, 0.45 s silences, longer tail padding, CRF 20 |
+| `tutorial` | Screen recordings, walkthroughs | VAD, 0.8 s silences, keeps pauses followable, CRF 20 |
+| `vlog` | Handheld footage with a music bed | Energy detector, -32 dBFS, 0.4 s silences |
+| `aggressive` | Short-form, maximum removal | Energy, -30 dBFS, 0.25 s, shortest pads, CRF 22 |
+| `gentle` | A conservative first pass | VAD, 1.0 s silences, 0.3 s / 0.5 s pads |
+
+A preset is a set of values, not a mode. Precedence, strongest last: built-in
+defaults, the preset, the config file, explicit CLI flags. So
+`--profile podcast --pad-after 0.6` keeps the podcast starting point and extends
+the tail, and a `[analysis]` value in the config file still beats the preset when
+`--profile` is passed. `autocut presets` prints the same list, and the chosen
+profile is recorded in the Cut List's `settings.profile`.
 
 ## Ordering rules
 
@@ -231,6 +253,8 @@ steps.
 A single TOML file, overridden by any CLI flag:
 
 ```toml
+# profile = "podcast"      # optional workflow preset; --profile wins over this
+
 [ordering]
 number_rule = "natural"   # natural | first | last | regex
 number_regex = ""         # required when number_rule = "regex"
@@ -274,12 +298,14 @@ enabled = true
 
 [log]
 level = "info"            # debug | info | warning | error | critical
+format = "text"           # text | json (one JSON object per line)
 # file = "autocut.log"
 ```
 
 Unknown keys are rejected, so a typo is an error instead of a silently ignored
-setting. Named presets (`podcast`, `tutorial`, `vlog`, `aggressive`, `gentle`)
-arrive with the detection settings in M5.
+setting. `--log-json` switches to JSON Lines for a log collector; every record
+carries `ts`, `level`, `logger`, `message` and stage fields such as `clips`,
+`cuts` and `removed_percent`.
 
 ## Troubleshooting
 
@@ -294,6 +320,8 @@ arrive with the detection settings in M5.
 | `the VAD detector needs onnxruntime` | `uv pip install -e ".[vad]"`, or use `--detector energy` |
 | VAD finds no speech in quiet recordings | Lower `--speech-probability`-equivalent via `[analysis] speech_probability = 0.35` |
 | Cuts sound abrupt | Raise `--pad-before`/`--pad-after`, or use `--shrink-pauses-to 0.3` |
+| Cuts feel too tight overall | Try `--profile gentle`, or start from `autocut presets` |
+| Logs need to feed a collector | `--log-json`, or `[log] format = "json"` with `file` |
 | Render is slower than expected | Try `--encoder h264_nvenc` (or another from `doctor`), raise `--preset`, or check that `--hardware` is on |
 | `error: source clip(s) not found` | The Cut List was moved away from its footage; keep `cutlist.json` beside the media or rerun `analyze` |
 | Timeline imports with media offline | The source files moved since the Cut List was written; export again from the same folder or relink in the editor |
@@ -308,7 +336,7 @@ arrive with the detection settings in M5.
 | M2 Detection: energy + VAD, post-processing, cache | done |
 | M3 Cut list + FFmpeg renderer | done |
 | M4 Timeline exports: xmeml, FCPXML, EDL | done |
-| M5 Robustness, performance, presets, structured logs | next |
+| M5 Robustness, performance, presets, structured logs | done |
 | M6 Single-file executable, release workflow | planned |
 | M7 Review UI | planned |
 | M8 Premiere UXP panel | planned |

@@ -48,6 +48,7 @@ from autocut.ordering.report import (
 from autocut.planning.cutlist import ClipInput, CutList, build_cutlist, write_cutlist
 from autocut.planning.loader import CutListSummary, load_cutlist
 from autocut.planning.timebase import Timebase
+from autocut.presets import describe_presets, preset_names
 from autocut.render.ffmpeg import ProgressCallback
 
 LOGGER = logging.getLogger(__name__)
@@ -189,6 +190,17 @@ DropFrameOpt = Annotated[
 TitleOpt = Annotated[
     str | None, typer.Option("--title", help="Sequence title recorded in the export.")
 ]
+ProfileOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--profile",
+        help="Named preset: " + ", ".join(preset_names()) + ".",
+    ),
+]
+LogJsonOpt = Annotated[
+    bool,
+    typer.Option("--log-json", help="Write JSON-lines logs instead of text lines."),
+]
 
 
 def guarded(func: Callable[P, R]) -> Callable[P, R]:
@@ -240,9 +252,11 @@ def _config(
     encoder: str | None = None,
     hardware: bool | None = None,
     edl_drop_frame: bool | None = None,
+    profile: str | None = None,
+    log_json: bool = False,
 ) -> Config:
     settings = apply_overrides(
-        load_config(config),
+        load_config(config, profile=profile),
         {
             "log.level": log_level,
             "ordering.number_rule": number_rule,
@@ -273,9 +287,10 @@ def _config(
             "render.encoder": encoder,
             "render.hardware": hardware,
             "export.edl_drop_frame": edl_drop_frame,
+            "log.format": "json" if log_json else None,
         },
     )
-    configure_logging(settings.log.level, settings.log.file)
+    configure_logging(settings.log.level, settings.log.file, settings.log.format)
     return settings
 
 
@@ -369,11 +384,12 @@ def _cutlist(settings: Config, result: OrderingResult, batch: BatchResult) -> Cu
         **settings.analysis.as_cutlist_payload(),
         "number_rule": settings.ordering.number_rule,
         "full_hash": settings.run.full_hash,
+        "profile": settings.profile,
     }
     return build_cutlist(clips, settings=payload, full_hash=settings.run.full_hash)
 
 
-def _report_analysis(batch: BatchResult, cutlist: CutList) -> None:
+def _report_analysis(settings: Config, batch: BatchResult, cutlist: CutList) -> None:
     analysed = len(batch.ok_analyses)
     typer.echo(
         f"analysed {analysed} clip(s) "
@@ -396,6 +412,19 @@ def _report_analysis(batch: BatchResult, cutlist: CutList) -> None:
                 typer.echo(f"warning: {warning}")
     for path, error in batch.failures:
         typer.echo(f"failed: {path.name}: {error}", err=True)
+    LOGGER.info(
+        "analysis complete",
+        extra={
+            "clips": analysed,
+            "failed": len(batch.failures),
+            "cached": batch.cached_count,
+            "cuts": cutlist.cut_count,
+            "source_seconds": round(cutlist.source_duration, 3),
+            "output_seconds": round(cutlist.duration, 3),
+            "removed_percent": cutlist.removed_percent,
+            "profile": settings.profile,
+        },
+    )
 
 
 def _finish(settings: Config, result: OrderingResult, batch: BatchResult) -> None:
@@ -439,6 +468,15 @@ def _render(settings: Config, cutlist: Path, target: Path) -> ExportResult:
 
 
 def _report_export(result: ExportResult, duration: float) -> None:
+    LOGGER.info(
+        "export complete",
+        extra={
+            "format": result.format,
+            "path": str(result.path),
+            "seconds": round(duration, 3),
+            "warnings": len(result.warnings),
+        },
+    )
     if result.format == "render":
         typer.echo(f"rendered {result.path} ({format_duration(duration)})")
         return
@@ -464,6 +502,16 @@ def root(
 
 
 @app.command()
+def presets() -> None:
+    """List the built-in workflow presets and what they change."""
+    width = max(len(name) for name in preset_names())
+    for name, summary in describe_presets():
+        typer.echo(f"{name.ljust(width)}  {summary}")
+    typer.echo("")
+    typer.echo('use --profile NAME, or profile = "NAME" in the config file')
+
+
+@app.command()
 @guarded
 def doctor() -> None:
     """Check ffmpeg, ffprobe and the available hardware encoders."""
@@ -484,6 +532,8 @@ def order(
     recursive: RecursiveOpt = False,
     number_rule: NumberRuleOpt = None,
     number_regex: NumberRegexOpt = None,
+    profile: ProfileOpt = None,
+    log_json: LogJsonOpt = False,
     config: ConfigOpt = None,
     log_level: LogLevelOpt = None,
     strict: StrictOpt = False,
@@ -493,6 +543,8 @@ def order(
     settings = _config(
         config=config,
         log_level=log_level,
+        profile=profile,
+        log_json=log_json,
         number_rule=number_rule,
         number_regex=number_regex,
         recursive=recursive,
@@ -533,6 +585,8 @@ def analyze(
     full_hash: FullHashOpt = False,
     no_cache: NoCacheOpt = False,
     cache_dir: CacheDirOpt = None,
+    profile: ProfileOpt = None,
+    log_json: LogJsonOpt = False,
     config: ConfigOpt = None,
     log_level: LogLevelOpt = None,
     strict: StrictOpt = False,
@@ -542,6 +596,8 @@ def analyze(
     settings = _config(
         config=config,
         log_level=log_level,
+        profile=profile,
+        log_json=log_json,
         number_rule=number_rule,
         number_regex=number_regex,
         recursive=recursive,
@@ -567,7 +623,7 @@ def analyze(
     batch = _analyse(settings, result)
     cutlist = _cutlist(settings, result, batch)
     target = write_cutlist(cutlist, _output_path(output))
-    _report_analysis(batch, cutlist)
+    _report_analysis(settings, batch, cutlist)
     typer.echo(f"wrote {target}")
     _finish(settings, result, batch)
 
@@ -602,6 +658,8 @@ def run(
     full_hash: FullHashOpt = False,
     no_cache: NoCacheOpt = False,
     cache_dir: CacheDirOpt = None,
+    profile: ProfileOpt = None,
+    log_json: LogJsonOpt = False,
     config: ConfigOpt = None,
     log_level: LogLevelOpt = None,
     strict: StrictOpt = False,
@@ -625,6 +683,8 @@ def run(
     settings = _config(
         config=config,
         log_level=log_level,
+        profile=profile,
+        log_json=log_json,
         number_rule=number_rule,
         number_regex=number_regex,
         recursive=recursive,
@@ -683,7 +743,7 @@ def run(
     batch = _analyse(settings, result)
     cutlist = _cutlist(settings, result, batch)
     cutlist_path = write_cutlist(cutlist, output_dir / "cutlist.json")
-    _report_analysis(batch, cutlist)
+    _report_analysis(settings, batch, cutlist)
     typer.echo(f"wrote {cutlist_path}")
     if render_assembly:
         rendered = _render(settings, cutlist_path, output_dir / "autocut.mp4")
@@ -714,6 +774,8 @@ def export_command(
     crossfade_ms: CrossfadeOpt = None,
     encoder: EncoderOpt = None,
     hardware: HardwareOpt = None,
+    profile: ProfileOpt = None,
+    log_json: LogJsonOpt = False,
     config: ConfigOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
@@ -721,6 +783,8 @@ def export_command(
     settings = _config(
         config=config,
         log_level=log_level,
+        profile=profile,
+        log_json=log_json,
         number_rule=None,
         number_regex=None,
         recursive=False,

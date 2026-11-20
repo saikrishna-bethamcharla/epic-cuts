@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,66 @@ def make_clip(
         directory / f"{name}.wav", speech=speech, silence=silence, repeats=repeats
     )
     return video_clip(target, audio=wav, seconds=wav_duration(wav))
+
+
+def test_analyze_profile_is_recorded_in_the_cutlist(
+    clips: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "cutlist.json"
+    result = run_analyze(
+        str(clips),
+        "-o",
+        str(out),
+        "--detector",
+        "energy",
+        "--no-cache",
+        "--profile",
+        "aggressive",
+    )
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["settings"]["profile"] == "aggressive"
+    assert payload["settings"]["min_silence"] == pytest.approx(0.25)
+    assert payload["settings"]["pad_after"] == pytest.approx(0.10)
+
+
+def test_analyze_json_logs_a_structured_summary(clips: Path, tmp_path: Path) -> None:
+    log_file = tmp_path / "autocut.jsonl"
+    config = tmp_path / "autocut.toml"
+    config.write_text(
+        '[log]\nformat = "json"\n' + f'file = "{log_file.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    result = run_analyze(
+        str(clips),
+        "-o",
+        str(tmp_path / "cutlist.json"),
+        "--detector",
+        "energy",
+        "--no-cache",
+        "--config",
+        str(config),
+    )
+    assert result.exit_code == 0, result.stderr
+
+    root = logging.getLogger()
+    try:
+        records = [
+            json.loads(line)
+            for line in log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    finally:
+        for handler in list(root.handlers):
+            handler.close()
+            root.removeHandler(handler)
+
+    summary = next(r for r in records if r["message"] == "analysis complete")
+    assert summary["level"] == "info"
+    assert summary["clips"] == 2
+    assert summary["failed"] == 0
+    assert summary["cuts"] >= 4
+    assert summary["removed_percent"] > 0
 
 
 @pytest.fixture

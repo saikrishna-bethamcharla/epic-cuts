@@ -53,8 +53,9 @@ exporters never reach back into analysis or media state.
 | Module | Responsibility |
 | --- | --- |
 | `autocut.errors` | Expected failures and their exit codes |
-| `autocut.logging_utils` | Logging setup (`--log-level`, later JSON lines) |
+| `autocut.logging_utils` | Logging setup (`--log-level`, text or JSON Lines) |
 | `autocut.config` | Validated settings (pydantic), TOML loading, CLI overrides |
+| `autocut.presets` | Named workflow presets applied below the config file |
 | `autocut.media.tools` | Locating ffmpeg/ffprobe, versions, hardware encoders |
 | `autocut.media.probe` | ffprobe JSON → `MediaInfo`; container support rules |
 | `autocut.media.fingerprint` | Fast (size/mtime/head+tail blake2b) or full SHA-256 |
@@ -79,6 +80,11 @@ exporters never reach back into analysis or media state.
 | `autocut.ordering.report` | Human and JSON ordering reports |
 | `autocut.doctor` | Environment report |
 | `autocut.cli` | Argument parsing, exit codes, wiring |
+
+Settings resolve in one direction only: built-in defaults → workflow preset →
+TOML file → CLI flag. A preset is therefore incapable of overriding a user's
+explicit choice, and the resolved settings (including `profile`) are recorded in
+the Cut List so an analysis stays reproducible.
 
 ## Invariants
 

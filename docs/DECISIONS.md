@@ -308,3 +308,43 @@ starting points, not policy: `--codec`, `--crf`, `--preset`, `--audio-bitrate`
 and `--encoder` override them, and the `[render]` section records the same
 values for repeatable jobs. The Cut List does not store render settings, because
 changing an encoder must not change the timeline.
+
+## D30 — Presets are settings, not modes, and the CLI names them `--profile`
+
+A preset (`podcast`, `tutorial`, `vlog`, `aggressive`, `gentle`) is a partial
+config that is merged before the user's own values: defaults → preset → TOML
+file → CLI flag. That order means `--profile gentle` can never silently undo an
+explicit `--min-silence`, and a project config file keeps working when a
+teammate adds `--profile` to a command. The merge is one section deep because the
+config has no nested objects; a later nested section would need a recursive
+merge and a test.
+
+The flag is `--profile`, not `--preset`, because `--preset` has meant the
+x264/x265 encoder speed preset since M3 and renaming it would break scripts. A
+preset contributes detection values and, where it is clearly an editing
+choice, render values (CRF and join fades); it never touches ordering, cache or
+logging. Every preset is validated against the same pydantic models in the test
+suite, so a bad number in `presets.py` fails CI instead of a user's run.
+
+The chosen profile is written to `settings.profile` in the Cut List so two runs
+that differ only by preset are distinguishable without re-reading the command
+line. `null` means no preset, i.e. built-in defaults plus the config file.
+
+## D31 — Logs are text by default and JSON Lines on request
+
+`--log-json` (or `[log] format = "json"`) switches every handler to one JSON
+object per line with `ts`, `level`, `logger`, `message` and any `extra=` fields.
+Text stays the default because a person running one command reads a terminal, not
+a collector, and a JSON wall would hide the human report. Stage summaries
+(`analysis complete`, `render complete`, `export complete`, encoder fallback)
+carry numeric `extra` fields; in text mode the formatter prints the message and
+ignores the extras, so no call site needs two code paths.
+
+Timestamps are UTC ISO-8601 with milliseconds and a `Z` suffix, which every log
+pipeline parses without a timezone question. Exception tracebacks go into an
+`exception` string field rather than separate lines, so every record stays a
+single line.
+
+Partial renders are deleted on failure, cancellation or an exhausted encoder
+list: a truncated MP4 is otherwise indistinguishable from a finished one, and a
+stale file from an earlier run must not look like the new result.

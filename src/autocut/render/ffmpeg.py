@@ -345,6 +345,15 @@ def _audio_ordinals(cutlist: LoadedCutList) -> dict[int, int | None]:
     return ordinals
 
 
+def _discard_partial(path: Path) -> None:
+    """Remove an incomplete render so no half file is mistaken for a result."""
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:  # pragma: no cover - depends on the filesystem
+        LOGGER.debug("could not remove partial output %s", path)
+
+
 def render_cutlist(
     cutlist: LoadedCutList,
     output: Path,
@@ -355,8 +364,10 @@ def render_cutlist(
     """Render every keep segment to ``output``, falling back to software."""
     settings = settings or RenderSettings()
     target = Path(output).expanduser()
-    if target.parent and not target.parent.exists():
+    try:
         target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # pragma: no cover - depends on the filesystem
+        raise InputError(f"cannot create output folder {target.parent}: {exc}") from exc
 
     missing = cutlist.missing_sources()
     if missing:
@@ -372,37 +383,55 @@ def render_cutlist(
     candidates = encoder_candidates(settings, available_hardware_encoders())
     failures: list[str] = []
 
-    for encoder in candidates:
-        command = build_render_command(plan, target, settings, encoder)
-        LOGGER.debug("rendering with %s: %s", encoder, command)
-        try:
-            _run_ffmpeg(
-                command,
-                total_frames=plan.total_frames,
-                fps=cutlist.timebase.fps,
-                on_progress=on_progress,
+    try:
+        for encoder in candidates:
+            command = build_render_command(plan, target, settings, encoder)
+            LOGGER.debug("rendering with %s: %s", encoder, command)
+            try:
+                _run_ffmpeg(
+                    command,
+                    total_frames=plan.total_frames,
+                    fps=cutlist.timebase.fps,
+                    on_progress=on_progress,
+                )
+            except ProcessingError as exc:
+                failures.append(f"{encoder}: {exc}")
+                _discard_partial(target)
+                continue
+            if not target.exists() or target.stat().st_size == 0:
+                failures.append(f"{encoder}: ffmpeg produced no output")
+                continue
+            fell_back = encoder != candidates[0]
+            warnings: tuple[str, ...] = ()
+            if fell_back:
+                warnings = (f"{candidates[0]} failed; rendered with {encoder}",)
+                LOGGER.warning(
+                    "encoder fallback",
+                    extra={"preferred": candidates[0], "used": encoder},
+                )
+            LOGGER.info(
+                "render complete",
+                extra={
+                    "encoder": encoder,
+                    "frames": plan.total_frames,
+                    "seconds": round(cutlist.duration_seconds, 3),
+                    "fallback": fell_back,
+                },
             )
-        except ProcessingError as exc:
-            failures.append(f"{encoder}: {exc}")
-            if target.exists():
-                target.unlink()
-            continue
-        if not target.exists() or target.stat().st_size == 0:
-            failures.append(f"{encoder}: ffmpeg produced no output")
-            continue
-        fell_back = encoder != candidates[0]
-        warnings = (
-            (f"{candidates[0]} failed; rendered with {encoder}",) if fell_back else ()
-        )
-        return RenderResult(
-            output=target,
-            encoder=encoder,
-            frames=plan.total_frames,
-            duration=cutlist.duration_seconds,
-            fell_back=fell_back,
-            warnings=warnings,
-        )
+            return RenderResult(
+                output=target,
+                encoder=encoder,
+                frames=plan.total_frames,
+                duration=cutlist.duration_seconds,
+                fell_back=fell_back,
+                warnings=warnings,
+            )
+    except BaseException:
+        # A cancelled or crashed render must not leave a playable-looking stub.
+        _discard_partial(target)
+        raise
 
+    _discard_partial(target)
     raise ProcessingError("render failed: " + "; ".join(failures))
 
 

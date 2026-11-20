@@ -130,6 +130,21 @@ def test_doctor_reports_a_usable_environment(ffmpeg_available: bool) -> None:
         assert "NOT READY" in result.stdout
 
 
+def test_presets_lists_every_builtin_profile() -> None:
+    result = runner.invoke(app, ["presets"])
+    assert result.exit_code == 0
+    for name in ("podcast", "tutorial", "vlog", "aggressive", "gentle"):
+        assert name in result.stdout
+    assert "--profile" in result.stdout
+
+
+def test_unknown_profile_is_exit_2(tmp_path: Path) -> None:
+    make_clips(tmp_path, ["1.mp4"])
+    result = runner.invoke(app, ["order", str(tmp_path), "--profile", "cinematic"])
+    assert result.exit_code == 2
+    assert "unknown profile" in result.stderr
+
+
 def test_order_probes_real_media(tmp_path: Path, tone_clip: ClipBuilder) -> None:
     tone_clip("2.mp4", seconds=1.0)
     tone_clip("1.mp4", seconds=1.0)

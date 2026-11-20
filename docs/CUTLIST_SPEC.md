@@ -40,7 +40,8 @@ FCPXML and EDL exporters and by the FFmpeg renderer (`autocut export`).
     "audio_track": 0,
     "crossfade_ms": 10,
     "number_rule": "natural",
-    "full_hash": false
+    "full_hash": false,
+    "profile": "podcast"
   },
   "sequence": {
     "fps": "30000/1001",
@@ -94,7 +95,7 @@ FCPXML and EDL exporters and by the FFmpeg renderer (`autocut export`).
 | --- | --- | --- |
 | `schema_version` | int | 1 for this document; exporters reject newer versions |
 | `generator` | object | `name`, `version` |
-| `settings` | object | Every parameter used, including detector and padding |
+| `settings` | object | Every parameter used, including detector and padding; `profile` names the workflow preset (or `null`) |
 | `sequence.fps` | string | Rational (`"30000/1001"`), never a float |
 | `sequence.frame_rounding` | string | `"nearest"`: half frames round up |
 | `clips[].source_hash` | string | `fast:<size>:<mtime_ns>:<blake2b>` or `sha256:<hex>` with `--full-hash` |

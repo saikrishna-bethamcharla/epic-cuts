@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from autocut.analysis.base import DetectorSettings
 from autocut.errors import InputError
+from autocut.presets import preset_settings
 from autocut.render.ffmpeg import RenderSettings
 
 NumberRuleName = Literal["natural", "first", "last", "regex"]
@@ -130,10 +131,12 @@ class ExportSettings(_Model):
 
 class LogSettings(_Model):
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
+    format: Literal["text", "json"] = "text"
     file: Path | None = None
 
 
 class Config(_Model):
+    profile: str | None = None
     ordering: OrderingSettings = Field(default_factory=OrderingSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     render: RenderConfig = Field(default_factory=RenderConfig)
@@ -151,10 +154,24 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
-def load_config(path: Path | None) -> Config:
-    """Load a TOML config file, or return defaults when no path is given."""
+def _merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Overlay ``override`` on ``base`` one section deep."""
+    merged: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value
+        for key, value in base.items()
+    }
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            current.update(value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _read_toml(path: Path | None) -> dict[str, Any]:
     if path is None:
-        return Config()
+        return {}
 
     config_path = Path(path).expanduser()
     if not config_path.exists():
@@ -163,18 +180,32 @@ def load_config(path: Path | None) -> Config:
         raise InputError(f"config path is not a file: {config_path}")
 
     try:
-        raw: dict[str, Any] = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise InputError(f"cannot read config file {config_path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise InputError(f"invalid TOML in {config_path}: {exc}") from exc
 
+
+def load_config(path: Path | None, profile: str | None = None) -> Config:
+    """Load settings: defaults, then preset, then the file, then ``profile``.
+
+    A ``--profile`` given on the command line beats a ``profile`` key in the
+    file; a file setting always beats the preset value it would replace.
+    """
+    raw = _read_toml(path)
+    file_profile = raw.pop("profile", None)
+    chosen = profile or file_profile
+    base = preset_settings(chosen) if chosen is not None else {}
+
     try:
-        return Config.model_validate(raw)
+        config = Config.model_validate(_merge_settings(base, raw))
     except ValidationError as exc:
-        raise InputError(
-            f"invalid config file {config_path}: {_format_validation_error(exc)}"
-        ) from exc
+        location = "config" if path is None else f"invalid config file {path}"
+        raise InputError(f"{location}: {_format_validation_error(exc)}") from exc
+    if chosen is not None:
+        config.profile = chosen.strip().lower()
+    return config
 
 
 def apply_overrides(config: Config, overrides: dict[str, Any]) -> Config:
